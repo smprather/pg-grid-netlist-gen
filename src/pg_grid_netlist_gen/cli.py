@@ -23,18 +23,12 @@ def app() -> None:
     help="Output directory for generated files.",
 )
 @click.option("--netlist/--no-netlist", default=True, help="Generate SPICE netlist.")
-@click.option("--viz/--no-viz", default=True, help="Generate 3D HTML visualization.")
+@click.option("--viz/--no-viz", default=True, help="Generate 2D HTML visualization.")
 @click.option(
     "--viz-region",
     type=str,
     default=None,
     help="Render subregion in microns: X1,Y1,X2,Y2",
-)
-@click.option(
-    "--z-exaggeration",
-    type=float,
-    default=50.0,
-    help="Z axis scale factor for visualization.",
 )
 @click.option("--open-browser", is_flag=True, help="Auto-open HTML after generation.")
 def generate(
@@ -43,7 +37,6 @@ def generate(
     netlist: bool,
     viz: bool,
     viz_region: str | None,
-    z_exaggeration: float,
     open_browser: bool,
 ) -> None:
     """Generate power grid netlist and visualization from CONFIG_FILE."""
@@ -85,7 +78,6 @@ def generate(
         click.echo(f"Rendering visualization: {viz_path}")
         render_grid(
             grid, config, viz_path,
-            z_exaggeration=z_exaggeration,
             viz_region=region,
             open_browser=open_browser,
         )

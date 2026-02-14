@@ -1,0 +1,2 @@
+#!/bin/bash
+/home/myles/pg-grid-netlist-gen/.venv/bin/python -m pg_grid_netlist_gen "$@"

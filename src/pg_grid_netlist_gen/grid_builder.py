@@ -119,27 +119,6 @@ def _get_resolved(resolved: list[ResolvedLayer], name: str) -> ResolvedLayer:
     raise ValueError(f"Resolved layer '{name}' not found")
 
 
-def _find_via_layer_between(config: Config, top_layer: str, bot_layer: str) -> str | None:
-    """Find the BEOL via layer between two metal layers."""
-    beol_names = [l.name for l in config.beol_stack.layers]
-    beol_types = {l.name: l.type for l in config.beol_stack.layers}
-
-    try:
-        top_idx = beol_names.index(top_layer)
-        bot_idx = beol_names.index(bot_layer)
-    except ValueError:
-        return None
-
-    if top_idx > bot_idx:
-        top_idx, bot_idx = bot_idx, top_idx
-
-    for i in range(top_idx + 1, bot_idx):
-        if beol_types[beol_names[i]] == "via":
-            return beol_names[i]
-
-    return None
-
-
 def _generate_stripes(
     resolved: list[ResolvedLayer],
     grid_size_x: float,
@@ -271,19 +250,17 @@ def _place_vias(
     nodes: dict[str, Node],
     z_coords: dict[str, tuple[float, float]],
 ) -> list[ViaConnection]:
-    """Place vias between adjacent grid layers using indexed lookups."""
+    """Place vias between adjacent grid layers by iterating through the BEOL stack."""
     vias = []
-    layer_order = config.grid_layer_order()
+    beol_layers = config.beol_stack.layers
+    grid_layer_names = {rl.name for rl in resolved}
 
     # Build indexes for fast lookup
-    # Stripes: layer -> direction -> {position -> net}
     stripe_index: dict[str, dict[str, dict[float, str]]] = {}
     for s in stripes:
         stripe_index.setdefault(s.layer, {}).setdefault(s.direction, {})[s.position] = s.net
 
-    # Staples: layer -> {(x, y) -> net}
     staple_index: dict[str, dict[tuple[float, float], str]] = {}
-    # Also: layer -> {x -> set of y} and layer -> {y -> set of x} for fast position lookups
     staple_by_x: dict[str, dict[float, set[float]]] = {}
     staple_by_y: dict[str, dict[float, set[float]]] = {}
     for s in staples:
@@ -291,18 +268,30 @@ def _place_vias(
         staple_by_x.setdefault(s.layer, {}).setdefault(s.x, set()).add(s.y)
         staple_by_y.setdefault(s.layer, {}).setdefault(s.y, set()).add(s.x)
 
-    for i in range(len(layer_order) - 1):
-        top_name = layer_order[i]
-        bot_name = layer_order[i + 1]
+    for i, layer in enumerate(beol_layers):
+        if layer.type != "via":
+            continue
+
+        # A via connects the metal layer above and below it in the BEOL stack list
+        if i == 0 or i == len(beol_layers) - 1:
+            continue # Via at the top or bottom of the stack
+
+        top_metal_layer = beol_layers[i - 1]
+        bot_metal_layer = beol_layers[i + 1]
+
+        # Ensure both metal layers are actually part of the grid we are building
+        if top_metal_layer.name not in grid_layer_names or bot_metal_layer.name not in grid_layer_names:
+            continue
+        
+        top_name = top_metal_layer.name
+        bot_name = bot_metal_layer.name
+        via_layer_name = layer.name
+
         top_rl = _get_resolved(resolved, top_name)
         bot_rl = _get_resolved(resolved, bot_name)
 
-        via_layer_name = _find_via_layer_between(config, top_name, bot_name)
-        if via_layer_name is None:
-            continue
-
         via_beol = config.get_beol_layer(via_layer_name)
-        conductivity = top_rl.conductivity_ms_m
+        conductivity = top_rl.conductivity_ms_m # Assume via material is same as top metal for now
 
         top_si = stripe_index.get(top_name, {})
         bot_si = stripe_index.get(bot_name, {})
@@ -310,20 +299,16 @@ def _place_vias(
         bot_sti = staple_index.get(bot_name, {})
 
         if top_rl.layer_type == "grid" and bot_rl.layer_type == "grid":
-            # Grid-to-grid: find crossings of perpendicular stripes with matching nets
             top_v = top_si.get("vertical", {})
             top_h = top_si.get("horizontal", {})
             bot_v = bot_si.get("vertical", {})
             bot_h = bot_si.get("horizontal", {})
 
-            # Case: top=vertical, bot=horizontal
             for tx, tnet in top_v.items():
                 for by, bnet in bot_h.items():
                     if tnet == bnet:
                         _add_via(vias, nodes, top_name, bot_name, via_layer_name,
                                  via_beol, top_rl, bot_rl, tx, by, tnet, conductivity)
-
-            # Case: top=horizontal, bot=vertical
             for ty, tnet in top_h.items():
                 for bx, bnet in bot_v.items():
                     if tnet == bnet:
@@ -331,21 +316,16 @@ def _place_vias(
                                  via_beol, top_rl, bot_rl, bx, ty, tnet, conductivity)
 
         elif top_rl.layer_type == "grid" and bot_rl.layer_type == "staple":
-            # For each top stripe, find staples that lie on it
             for direction, positions in top_si.items():
                 for pos, tnet in positions.items():
                     if direction == "vertical":
-                        # Stripe at x=pos; find staples with matching x
                         for y in sorted(staple_by_x.get(bot_name, {}).get(pos, set())):
-                            snet = bot_sti.get((pos, y))
-                            if snet == tnet:
+                            if bot_sti.get((pos, y)) == tnet:
                                 _add_via(vias, nodes, top_name, bot_name, via_layer_name,
                                          via_beol, top_rl, bot_rl, pos, y, tnet, conductivity)
                     else:
-                        # Stripe at y=pos; find staples with matching y
                         for x in sorted(staple_by_y.get(bot_name, {}).get(pos, set())):
-                            snet = bot_sti.get((x, pos))
-                            if snet == tnet:
+                            if bot_sti.get((x, pos)) == tnet:
                                 _add_via(vias, nodes, top_name, bot_name, via_layer_name,
                                          via_beol, top_rl, bot_rl, x, pos, tnet, conductivity)
 
@@ -354,23 +334,18 @@ def _place_vias(
                 for pos, bnet in positions.items():
                     if direction == "vertical":
                         for y in sorted(staple_by_x.get(top_name, {}).get(pos, set())):
-                            snet = top_sti.get((pos, y))
-                            if snet == bnet:
+                            if top_sti.get((pos, y)) == bnet:
                                 _add_via(vias, nodes, top_name, bot_name, via_layer_name,
                                          via_beol, top_rl, bot_rl, pos, y, bnet, conductivity)
                     else:
                         for x in sorted(staple_by_y.get(top_name, {}).get(pos, set())):
-                            snet = top_sti.get((x, pos))
-                            if snet == bnet:
+                            if top_sti.get((x, pos)) == bnet:
                                 _add_via(vias, nodes, top_name, bot_name, via_layer_name,
                                          via_beol, top_rl, bot_rl, x, pos, bnet, conductivity)
 
         elif top_rl.layer_type == "staple" and bot_rl.layer_type == "staple":
-            # Staple-to-staple: match by position and net
-            # Iterate over the smaller set
             for (x, y), tnet in top_sti.items():
-                bnet = bot_sti.get((x, y))
-                if bnet == tnet:
+                if bot_sti.get((x, y)) == tnet:
                     _add_via(vias, nodes, top_name, bot_name, via_layer_name,
                              via_beol, top_rl, bot_rl, x, y, tnet, conductivity)
 

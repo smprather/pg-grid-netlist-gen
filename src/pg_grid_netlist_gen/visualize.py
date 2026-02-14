@@ -1,91 +1,60 @@
-"""Plotly 3D visualization of the power grid."""
+"""Plotly 2D visualization of the power grid."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import plotly.graph_objects as go
 
 from pg_grid_netlist_gen.config import Config
-from pg_grid_netlist_gen.geometry import Grid, Segment, Staple, ViaConnection
+from pg_grid_netlist_gen.geometry import Grid
 
-# Color scheme per layer tier
+# Color scheme per layer tier (using rgba for fill color with some transparency)
 LAYER_COLORS: dict[str, str] = {
-    "M1": "rgb(30, 100, 220)",
-    "MINT1": "rgb(40, 160, 80)",
-    "MINT2": "rgb(50, 170, 90)",
-    "MINT3": "rgb(60, 180, 100)",
-    "MINT4": "rgb(70, 190, 110)",
-    "MINT5": "rgb(80, 200, 120)",
-    "MSMG1": "rgb(220, 140, 40)",
-    "MSMG2": "rgb(230, 150, 50)",
-    "MSMG3": "rgb(240, 160, 60)",
-    "MSMG4": "rgb(250, 170, 70)",
-    "MSMG5": "rgb(255, 180, 80)",
-    "MG1": "rgb(200, 50, 50)",
-    "MG2": "rgb(220, 70, 70)",
-    "VG1": "rgb(180, 40, 40)",
+    "M1": "rgba(30, 100, 220, 0.7)",
+    "MINT1": "rgba(40, 160, 80, 0.7)",
+    "MINT2": "rgba(50, 170, 90, 0.7)",
+    "MINT3": "rgba(60, 180, 100, 0.7)",
+    "MINT4": "rgba(70, 190, 110, 0.7)",
+    "MINT5": "rgba(80, 200, 120, 0.7)",
+    "MSMG1": "rgba(220, 140, 40, 0.7)",
+    "MSMG2": "rgba(230, 150, 50, 0.7)",
+    "MSMG3": "rgba(240, 160, 60, 0.7)",
+    "MSMG4": "rgba(250, 170, 70, 0.7)",
+    "MSMG5": "rgba(255, 180, 80, 0.7)",
+    "MG1": "rgba(200, 50, 50, 0.7)",
+    "MG2": "rgba(220, 70, 70, 0.7)",
+    # Explicit colors for via layers
+    "VG1": "rgba(180, 40, 40, 0.7)",
+    "VINT1": "rgba(180, 40, 40, 0.7)",
+    "VINT2": "rgba(180, 40, 40, 0.7)",
+    "VINT3": "rgba(180, 40, 40, 0.7)",
+    "VINT4": "rgba(180, 40, 40, 0.7)",
+    "VINT5": "rgba(180, 40, 40, 0.7)",
+    "VSMG1": "rgba(180, 40, 40, 0.7)",
+    "VSMG2": "rgba(180, 40, 40, 0.7)",
+    "VSMG3": "rgba(180, 40, 40, 0.7)",
+    "VSMG4": "rgba(180, 40, 40, 0.7)",
+    "VSMG5": "rgba(180, 40, 40, 0.7)",
+    "V1": "rgba(180, 40, 40, 0.7)",
+    "V0": "rgba(180, 40, 40, 0.7)",
 }
 
-VIA_COLOR = "rgb(160, 160, 160)"
-CELL_COLOR = "rgb(220, 200, 50)"
-
-
-def _box_mesh(
-    x0: float, y0: float, z0: float,
-    x1: float, y1: float, z1: float,
-) -> tuple[list[float], list[float], list[float], list[int], list[int], list[int]]:
-    """Generate vertices and triangle indices for a 3D box."""
-    # 8 vertices
-    vx = [x0, x1, x1, x0, x0, x1, x1, x0]
-    vy = [y0, y0, y1, y1, y0, y0, y1, y1]
-    vz = [z0, z0, z0, z0, z1, z1, z1, z1]
-
-    # 12 triangles (2 per face)
-    ti = [0, 0, 4, 4, 0, 0, 1, 1, 0, 0, 3, 3]
-    tj = [1, 2, 5, 6, 1, 4, 2, 5, 3, 4, 2, 6]
-    tk = [2, 3, 6, 7, 4, 5, 5, 6, 4, 7, 6, 7]
-
-    return vx, vy, vz, ti, tj, tk
-
-
-def _merge_meshes(
-    boxes: list[tuple[list[float], list[float], list[float], list[int], list[int], list[int]]],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Merge multiple box meshes into a single mesh."""
-    all_x, all_y, all_z = [], [], []
-    all_i, all_j, all_k = [], [], []
-    offset = 0
-
-    for vx, vy, vz, ti, tj, tk in boxes:
-        all_x.extend(vx)
-        all_y.extend(vy)
-        all_z.extend(vz)
-        all_i.extend(idx + offset for idx in ti)
-        all_j.extend(idx + offset for idx in tj)
-        all_k.extend(idx + offset for idx in tk)
-        offset += len(vx)
-
-    return (
-        np.array(all_x), np.array(all_y), np.array(all_z),
-        np.array(all_i), np.array(all_j), np.array(all_k),
-    )
+VIA_COLOR = "rgba(160, 160, 160, 0.8)" # This is a fallback if a via layer is not in LAYER_COLORS
+CELL_COLOR = "rgba(220, 200, 50, 0.5)"
 
 
 def render_grid(
     grid: Grid,
     config: Config,
     output_path: str | Path,
-    z_exaggeration: float = 50.0,
     viz_region: tuple[float, float, float, float] | None = None,
     open_browser: bool = False,
 ) -> None:
-    """Render the grid as a 3D HTML visualization."""
+    """Render the grid as a 2D interactive HTML visualization."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Convert viz_region from microns to nm if specified
     region_nm: tuple[float, float, float, float] | None = None
     if viz_region:
         region_nm = (
@@ -95,150 +64,184 @@ def render_grid(
 
     fig = go.Figure()
 
-    # Group segments by layer
-    layer_segments: dict[str, list[Segment]] = {}
-    for seg in grid.segments:
-        if region_nm and not _in_region_segment(seg, region_nm):
-            continue
-        layer_segments.setdefault(seg.layer, []).append(seg)
+    # List to store traces as they are generated, maintaining BEOL stack order
+    ordered_traces = []
+    
+    # Process layers based on BEOL stack order (highest to lowest)
+    for beol_layer in config.beol_stack.layers:
+        layer_name = beol_layer.name
+        
+        if beol_layer.type == "metal":
+            # Check if this metal layer is actually part of the grid (has segments or staples)
+            has_segments = any(seg.layer == layer_name for seg in grid.segments)
+            has_staples = any(staple.layer == layer_name for staple in grid.staples)
 
-    # Render segment boxes per layer
-    for layer_name, segs in layer_segments.items():
-        boxes = []
-        for seg in segs:
-            box = _segment_to_box(seg, z_exaggeration)
-            if box:
-                boxes.append(box)
+            if not (has_segments or has_staples):
+                continue # Skip if no components for this metal layer in the grid
 
-        if not boxes:
-            continue
+            current_layer_xs = []
+            current_layer_ys = []
+            color = LAYER_COLORS.get(layer_name, "rgba(128, 128, 128, 0.7)")
 
-        x, y, z, i, j, k = _merge_meshes(boxes)
-        color = LAYER_COLORS.get(layer_name, "rgb(128, 128, 128)")
+            # Segments
+            for seg in grid.segments:
+                if seg.layer == layer_name:
+                    if region_nm and not _in_region_segment(seg, region_nm):
+                        continue
+                    half_w = seg.width / 2.0
+                    if seg.node_a.x == seg.node_b.x: # Vertical
+                        x0, x1 = (seg.node_a.x - half_w), (seg.node_a.x + half_w)
+                        y0, y1 = min(seg.node_a.y, seg.node_b.y), max(seg.node_a.y, seg.node_b.y)
+                    else: # Horizontal
+                        x0, x1 = min(seg.node_a.x, seg.node_b.x), max(seg.node_a.x, seg.node_b.x)
+                        y0, y1 = (seg.node_a.y - half_w), (seg.node_a.y + half_w)
+                    
+                    current_layer_xs.extend([x0/1000, x1/1000, x1/1000, x0/1000, x0/1000, None])
+                    current_layer_ys.extend([y0/1000, y0/1000, y1/1000, y1/1000, y0/1000, None])
 
-        fig.add_trace(go.Mesh3d(
-            x=x / 1000, y=y / 1000, z=z,  # convert to μm for display
-            i=i, j=j, k=k,
-            color=color,
-            opacity=0.6,
-            name=f"{layer_name} (segments)",
-            hoverinfo="name",
-            showlegend=True,
-        ))
+            # Staples
+            for staple in grid.staples:
+                if staple.layer == layer_name:
+                    if region_nm and not _in_region_point(staple.x, staple.y, region_nm):
+                        continue
+                    half_s = staple.size / 2.0
+                    x0, y0 = staple.x - half_s, staple.y - half_s
+                    x1, y1 = staple.x + half_s, staple.y + half_s
 
-    # Render staples per layer
-    layer_staples: dict[str, list[Staple]] = {}
-    for staple in grid.staples:
-        if region_nm and not _in_region_point(staple.x, staple.y, region_nm):
-            continue
-        layer_staples.setdefault(staple.layer, []).append(staple)
+                    current_layer_xs.extend([x0/1000, x1/1000, x1/1000, x0/1000, x0/1000, None])
+                    current_layer_ys.extend([y0/1000, y0/1000, y1/1000, y1/1000, y0/1000, None])
+            
+            if current_layer_xs:
+                ordered_traces.append(
+                    go.Scatter(
+                        x=current_layer_xs, y=current_layer_ys,
+                        mode='lines',
+                        fill='toself',
+                        fillcolor=color,
+                        line=dict(color=color, width=0.5),
+                        name=layer_name,
+                        hoverinfo='name',
+                        visible=False # Hidden by default
+                    )
+                )
 
-    for layer_name, stps in layer_staples.items():
-        beol_layer = config.get_beol_layer(layer_name)
-        z_coords = _compute_z_for_layer(config, layer_name)
-        if z_coords is None:
-            continue
-        z_bot, z_top = z_coords
+        elif beol_layer.type == "via":
+            # Check if this via layer has any vias placed
+            has_vias = any(via.via_layer == layer_name for via in grid.vias)
+            if not has_vias:
+                continue # Skip if no vias for this layer
 
-        boxes = []
-        for staple in stps:
-            half = staple.size / 2.0
-            boxes.append(_box_mesh(
-                staple.x - half, staple.y - half, z_bot * z_exaggeration,
-                staple.x + half, staple.y + half, z_top * z_exaggeration,
-            ))
+            current_via_xs = []
+            current_via_ys = []
+            color = LAYER_COLORS.get(layer_name, VIA_COLOR)
 
-        if not boxes:
-            continue
+            for via in grid.vias:
+                if via.via_layer == layer_name:
+                    if region_nm and not _in_region_point(via.node_top.x, via.node_top.y, region_nm):
+                        continue
+                    half_w = via.width / 2.0
+                    x0, y0 = via.node_top.x - half_w, via.node_top.y - half_w
+                    x1, y1 = via.node_top.x + half_w, via.node_top.y + half_w
+                    current_via_xs.extend([x0/1000, x1/1000, x1/1000, x0/1000, x0/1000, None])
+                    current_via_ys.extend([y0/1000, y0/1000, y1/1000, y1/1000, y0/1000, None])
+            
+            if current_via_xs:
+                ordered_traces.append(
+                    go.Scatter(
+                        x=current_via_xs, y=current_via_ys,
+                        mode='lines',
+                        fill='toself',
+                        fillcolor=color,
+                        line=dict(color=color, width=0.5),
+                        name=layer_name,
+                        hoverinfo='name',
+                        visible=False # Hidden by default
+                    )
+                )
 
-        x, y, z, i, j, k = _merge_meshes(boxes)
-        color = LAYER_COLORS.get(layer_name, "rgb(128, 128, 128)")
-
-        fig.add_trace(go.Mesh3d(
-            x=x / 1000, y=y / 1000, z=z,
-            i=i, j=j, k=k,
-            color=color,
-            opacity=0.5,
-            name=f"{layer_name} (staples)",
-            hoverinfo="name",
-            showlegend=True,
-        ))
-
-    # Render vias
-    via_boxes: dict[str, list] = {}
-    for via in grid.vias:
-        if region_nm and not _in_region_point(via.node_top.x, via.node_top.y, region_nm):
-            continue
-        via_boxes.setdefault(via.via_layer, []).append(via)
-
-    for via_layer, via_list in via_boxes.items():
-        z_coords = _compute_z_for_layer(config, via_layer)
-        if z_coords is None:
-            continue
-        z_bot, z_top = z_coords
-
-        boxes = []
-        for via in via_list:
-            half_w = via.width / 2.0
-            boxes.append(_box_mesh(
-                via.node_top.x - half_w, via.node_top.y - half_w, z_bot * z_exaggeration,
-                via.node_top.x + half_w, via.node_top.y + half_w, z_top * z_exaggeration,
-            ))
-
-        if not boxes:
-            continue
-
-        x, y, z, i, j, k = _merge_meshes(boxes)
-
-        fig.add_trace(go.Mesh3d(
-            x=x / 1000, y=y / 1000, z=z,
-            i=i, j=j, k=k,
-            color=VIA_COLOR,
-            opacity=0.4,
-            name=f"{via_layer} (vias)",
-            hoverinfo="name",
-            showlegend=True,
-        ))
-
-    # Render standard cells as blocks
+    # Process Cells (always added last if present)
     if grid.cells:
         cell_cfg = config.standard_cells[0]
-        cell_w = cell_cfg.size["x"]
-        cell_h = cell_cfg.size["y"]
-        # Cells sit below M1 — use a small z range below the BEOL
-        cell_z_bot = -100 * z_exaggeration
-        cell_z_top = 0
-
-        boxes = []
+        cell_w, cell_h = cell_cfg.size["x"], cell_cfg.size["y"]
+        
+        cell_xs = []
+        cell_ys = []
         for cell in grid.cells:
             if region_nm and not _in_region_point(cell.x, cell.y, region_nm):
                 continue
-            boxes.append(_box_mesh(
-                cell.x - cell_w / 2, cell.y - cell_h / 2, cell_z_bot,
-                cell.x + cell_w / 2, cell.y + cell_h / 2, cell_z_top,
-            ))
+            x0, y0 = cell.x - cell_w / 2, cell.y - cell_h / 2
+            x1, y1 = cell.x + cell_w / 2, cell.y + cell_h / 2
+            cell_xs.extend([x0/1000, x1/1000, x1/1000, x0/1000, x0/1000, None])
+            cell_ys.extend([y0/1000, y0/1000, y1/1000, y1/1000, y0/1000, None])
+        
+        if cell_xs:
+            ordered_traces.append(
+                go.Scatter(
+                    x=cell_xs, y=cell_ys,
+                    mode='lines',
+                    fill='toself',
+                    fillcolor=CELL_COLOR,
+                    line=dict(color="rgba(0,0,0,0.5)", width=0.5),
+                    name="Cells",
+                    hoverinfo='name',
+                    visible=False # Hidden by default
+                )
+            )
 
-        if boxes:
-            x, y, z, i, j, k = _merge_meshes(boxes)
-            fig.add_trace(go.Mesh3d(
-                x=x / 1000, y=y / 1000, z=z,
-                i=i, j=j, k=k,
-                color=CELL_COLOR,
-                opacity=0.5,
-                name="Standard Cells",
-                hoverinfo="name",
-                showlegend=True,
-            ))
+    # Add all traces to the figure in their determined order
+    for trace in ordered_traces:
+        fig.add_trace(trace)
+
+    # Create dropdown buttons
+    buttons = [
+        dict(
+            label="None",
+            method="restyle",
+            args=["visible", [False] * len(fig.data)],
+        ),
+        dict(
+            label="All",
+            method="restyle",
+            args=["visible", [True] * len(fig.data)],
+        ),
+    ]
+
+    # Add buttons for individual layers based on the order in ordered_traces
+    for i, trace in enumerate(fig.data):
+        visibility = [False] * len(fig.data)
+        visibility[i] = True # Set only this trace to visible
+        
+        buttons.append(
+            dict(
+                label=trace.name,
+                method="restyle",
+                args=["visible", visibility],
+            )
+        )
+
+    updatemenus = [
+        dict(
+            active=0, # "None" is active by default
+            buttons=buttons,
+            direction="down",
+            pad={"r": 10, "t": 10},
+            showactive=True,
+            x=0.01,
+            xanchor="left",
+            y=1.1,
+            yanchor="top",
+        )
+    ]
 
     fig.update_layout(
-        title=f"Power Grid - {config.beol_stack.technology} ({config.beol_stack.node})",
-        scene=dict(
-            xaxis_title="X (μm)",
-            yaxis_title="Y (μm)",
-            zaxis_title="Z (nm, exaggerated)",
-            aspectmode="data",
-        ),
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+        title=f"2D View - {config.beol_stack.technology} ({config.beol_stack.node})",
+        xaxis_title="X (μm)",
+        yaxis_title="Y (μm)",
+        updatemenus=updatemenus,
+        width=800,
+        height=800,
+        xaxis=dict(scaleanchor="y", scaleratio=1),
+        yaxis=dict(autorange="reversed"),
     )
 
     fig.write_html(str(output_path), include_plotlyjs="cdn")
@@ -247,59 +250,7 @@ def render_grid(
         import webbrowser
         webbrowser.open(f"file://{output_path.resolve()}")
 
-
-def _segment_to_box(
-    seg: Segment,
-    z_exaggeration: float,
-) -> tuple[list[float], list[float], list[float], list[int], list[int], list[int]] | None:
-    """Convert a segment to a 3D box."""
-    half_w = seg.width / 2.0
-    z_bot = seg.node_a.z * z_exaggeration
-    z_top = (seg.node_a.z + seg.thickness) * z_exaggeration
-
-    if seg.node_a.x == seg.node_b.x:
-        # Vertical segment (runs along Y)
-        x0 = seg.node_a.x - half_w
-        x1 = seg.node_a.x + half_w
-        y0 = min(seg.node_a.y, seg.node_b.y)
-        y1 = max(seg.node_a.y, seg.node_b.y)
-    else:
-        # Horizontal segment (runs along X)
-        x0 = min(seg.node_a.x, seg.node_b.x)
-        x1 = max(seg.node_a.x, seg.node_b.x)
-        y0 = seg.node_a.y - half_w
-        y1 = seg.node_a.y + half_w
-
-    if x0 == x1 or y0 == y1:
-        return None
-
-    return _box_mesh(x0, y0, z_bot, x1, y1, z_top)
-
-
-def _compute_z_for_layer(
-    config: Config,
-    layer_name: str,
-) -> tuple[float, float] | None:
-    """Compute z_bottom, z_top for a layer from the BEOL stack."""
-    layers_bottom_up = list(reversed(config.beol_stack.layers))
-    z = 0.0
-    for layer in layers_bottom_up:
-        if layer.type == "substrate":
-            z = 0.0
-            continue
-        z_bottom = z
-        z_top = z + layer.thickness
-        if layer.name == layer_name:
-            return z_bottom, z_top
-        z = z_top
-    return None
-
-
-def _in_region_segment(
-    seg: Segment,
-    region: tuple[float, float, float, float],
-) -> bool:
-    """Check if a segment overlaps with the region."""
+def _in_region_segment(seg, region):
     x_min, y_min, x_max, y_max = region
     sx_min = min(seg.node_a.x, seg.node_b.x)
     sx_max = max(seg.node_a.x, seg.node_b.x)
@@ -307,7 +258,5 @@ def _in_region_segment(
     sy_max = max(seg.node_a.y, seg.node_b.y)
     return sx_max >= x_min and sx_min <= x_max and sy_max >= y_min and sy_min <= y_max
 
-
-def _in_region_point(x: float, y: float, region: tuple[float, float, float, float]) -> bool:
-    """Check if a point is within the region."""
+def _in_region_point(x, y, region):
     return region[0] <= x <= region[2] and region[1] <= y <= region[3]

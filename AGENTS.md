@@ -31,6 +31,10 @@ The output is:
       Do not calculate capacitance to other conductors. When calculating fringe capacitance, assume
       the segment of wire stands alone in the space.
 
+The beol_stack/layers are listed in order from highest to lowest. Layers of type "via" are used to connect the "metal" layer above
+and below the via. The via shape should be a square with x and y lengths of min_width. A via should be placed anywhere the layer
+above and layer below intersect.
+
 ## Tech Stack
 
 - Python 3.14

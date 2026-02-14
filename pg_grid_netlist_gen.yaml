@@ -34,8 +34,8 @@ grid:
     - VDD
     - VSS
   grid_size:
-    x: 50000
-    y: 50000
+    x: 10000
+    y: 10000
   # If not specified, the width should use the configured min_width for the layer
   # If not specified, the pitch should use the configured pitch for the layer
   # If a layer is of type "staple", ignore the direction config
@@ -48,10 +48,6 @@ grid:
     MG2:
       type: grid
       width: 150
-      pitch: 1.2
-      direction: vertical
-    VG1:
-      type: grid
       pitch: 1.2
       direction: horizontal
     MG1:
