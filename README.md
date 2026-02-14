@@ -78,7 +78,7 @@ The generated `power_grid.html` provides an interactive view. Below is a static 
 
 ![MG2 Layer Visualization](output/MG2.png)
 
-[Open the full interactive visualization (power_grid.html)](output/power_grid.html)
+[Open the full interactive visualization (power_grid.html)](https://smprather.github.io/pg-grid-netlist-gen)
 
 ### SPICE Netlist Snippet
 
