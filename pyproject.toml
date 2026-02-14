@@ -1,0 +1,23 @@
+[project]
+name = "pg-grid-netlist-gen"
+version = "0.1.0"
+description = "Power/Ground Grid Netlist Generator for BEOL metal stacks"
+readme = "README.md"
+authors = [
+    { name = "Myles Prather", email = "smprather@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "plotly>=6.0",
+    "rich-click>=1.8",
+    "numpy>=2.0",
+]
+
+[project.scripts]
+pg-grid-netlist-gen = "pg_grid_netlist_gen.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.9.18,<0.10.0"]
+build-backend = "uv_build"
