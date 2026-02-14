@@ -13,6 +13,7 @@ dependencies = [
     "plotly>=6.0",
     "rich-click>=1.8",
     "numpy>=2.0",
+    "kaleido>=0.2.1",
 ]
 
 [project.scripts]

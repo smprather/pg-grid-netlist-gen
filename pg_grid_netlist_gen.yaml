@@ -21,8 +21,7 @@ standard_cells:
       - Y
       - VDD
       - VSS
-    # Microns
-    distance_apart_um: 1000.0
+    distance_apart: 1000.0
 grid:
   # Microns
   nets:
@@ -36,12 +35,10 @@ grid:
   grid_size:
     x: 10000
     y: 10000
-  # If not specified, the width should use the configured min_width for the layer
-  # If not specified, the pitch should use the configured pitch for the layer
-  # If a layer is of type "staple", ignore the direction config
-  # Pitch is specified as a factor. Example: Pitch=2.0 means to use twice
-  # the minimum pitch for the layer.
-  # The COMMON layer config parameters should be applied to all of the layers
+  # Both pitch and width should be specified as a factor. Example: Pitch=2.0 means to use twice the minimum pitch for the layer.
+  # The default values for width and pitch are 1.0.
+  # If a layer is of type "staple", ignore the direction config parameter
+  # The COMMON layer parameters should be applied to all of the layers
   layers:
     COMMON:
       material: copper

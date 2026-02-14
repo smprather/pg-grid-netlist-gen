@@ -47,13 +47,21 @@ CELL_COLOR = "rgba(220, 200, 50, 0.5)"
 def render_grid(
     grid: Grid,
     config: Config,
-    output_path: str | Path,
+    output_path: str | Path | None,
     viz_region: tuple[float, float, float, float] | None = None,
     open_browser: bool = False,
+    save_image_layer: str | None = None,
+    output_dir: Path | None = None,
 ) -> None:
     """Render the grid as a 2D interactive HTML visualization."""
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not (output_path or save_image_layer):
+        return
+
+    if output_dir is None and (output_path or save_image_layer):
+        # Fallback if output_dir is not provided, derive from output_path or use default
+        output_dir = Path(output_path).parent if output_path else Path("output")
+    
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     region_nm: tuple[float, float, float, float] | None = None
     if viz_region:
@@ -72,34 +80,29 @@ def render_grid(
         layer_name = beol_layer.name
         
         if beol_layer.type == "metal":
-            # Check if this metal layer is actually part of the grid (has segments or staples)
             has_segments = any(seg.layer == layer_name for seg in grid.segments)
             has_staples = any(staple.layer == layer_name for staple in grid.staples)
-
             if not (has_segments or has_staples):
-                continue # Skip if no components for this metal layer in the grid
+                continue
 
             current_layer_xs = []
             current_layer_ys = []
             color = LAYER_COLORS.get(layer_name, "rgba(128, 128, 128, 0.7)")
 
-            # Segments
             for seg in grid.segments:
                 if seg.layer == layer_name:
                     if region_nm and not _in_region_segment(seg, region_nm):
                         continue
                     half_w = seg.width / 2.0
-                    if seg.node_a.x == seg.node_b.x: # Vertical
+                    if seg.node_a.x == seg.node_b.x:
                         x0, x1 = (seg.node_a.x - half_w), (seg.node_a.x + half_w)
                         y0, y1 = min(seg.node_a.y, seg.node_b.y), max(seg.node_a.y, seg.node_b.y)
-                    else: # Horizontal
+                    else:
                         x0, x1 = min(seg.node_a.x, seg.node_b.x), max(seg.node_a.x, seg.node_b.x)
                         y0, y1 = (seg.node_a.y - half_w), (seg.node_a.y + half_w)
-                    
                     current_layer_xs.extend([x0/1000, x1/1000, x1/1000, x0/1000, x0/1000, None])
                     current_layer_ys.extend([y0/1000, y0/1000, y1/1000, y1/1000, y0/1000, None])
 
-            # Staples
             for staple in grid.staples:
                 if staple.layer == layer_name:
                     if region_nm and not _in_region_point(staple.x, staple.y, region_nm):
@@ -107,29 +110,16 @@ def render_grid(
                     half_s = staple.size / 2.0
                     x0, y0 = staple.x - half_s, staple.y - half_s
                     x1, y1 = staple.x + half_s, staple.y + half_s
-
                     current_layer_xs.extend([x0/1000, x1/1000, x1/1000, x0/1000, x0/1000, None])
                     current_layer_ys.extend([y0/1000, y0/1000, y1/1000, y1/1000, y0/1000, None])
             
             if current_layer_xs:
-                ordered_traces.append(
-                    go.Scatter(
-                        x=current_layer_xs, y=current_layer_ys,
-                        mode='lines',
-                        fill='toself',
-                        fillcolor=color,
-                        line=dict(color=color, width=0.5),
-                        name=layer_name,
-                        hoverinfo='name',
-                        visible=False # Hidden by default
-                    )
-                )
+                ordered_traces.append(go.Scatter(x=current_layer_xs, y=current_layer_ys, mode='lines', fill='toself', fillcolor=color, line=dict(color=color, width=0.5), name=layer_name, hoverinfo='name', visible=False))
 
         elif beol_layer.type == "via":
-            # Check if this via layer has any vias placed
             has_vias = any(via.via_layer == layer_name for via in grid.vias)
             if not has_vias:
-                continue # Skip if no vias for this layer
+                continue
 
             current_via_xs = []
             current_via_ys = []
@@ -146,26 +136,12 @@ def render_grid(
                     current_via_ys.extend([y0/1000, y0/1000, y1/1000, y1/1000, y0/1000, None])
             
             if current_via_xs:
-                ordered_traces.append(
-                    go.Scatter(
-                        x=current_via_xs, y=current_via_ys,
-                        mode='lines',
-                        fill='toself',
-                        fillcolor=color,
-                        line=dict(color=color, width=0.5),
-                        name=layer_name,
-                        hoverinfo='name',
-                        visible=False # Hidden by default
-                    )
-                )
+                ordered_traces.append(go.Scatter(x=current_via_xs, y=current_via_ys, mode='lines', fill='toself', fillcolor=color, line=dict(color=color, width=0.5), name=layer_name, hoverinfo='name', visible=False))
 
-    # Process Cells (always added last if present)
     if grid.cells:
         cell_cfg = config.standard_cells[0]
         cell_w, cell_h = cell_cfg.size["x"], cell_cfg.size["y"]
-        
-        cell_xs = []
-        cell_ys = []
+        cell_xs, cell_ys = [], []
         for cell in grid.cells:
             if region_nm and not _in_region_point(cell.x, cell.y, region_nm):
                 continue
@@ -173,82 +149,60 @@ def render_grid(
             x1, y1 = cell.x + cell_w / 2, cell.y + cell_h / 2
             cell_xs.extend([x0/1000, x1/1000, x1/1000, x0/1000, x0/1000, None])
             cell_ys.extend([y0/1000, y0/1000, y1/1000, y1/1000, y0/1000, None])
-        
         if cell_xs:
-            ordered_traces.append(
-                go.Scatter(
-                    x=cell_xs, y=cell_ys,
-                    mode='lines',
-                    fill='toself',
-                    fillcolor=CELL_COLOR,
-                    line=dict(color="rgba(0,0,0,0.5)", width=0.5),
-                    name="Cells",
-                    hoverinfo='name',
-                    visible=False # Hidden by default
-                )
-            )
+            ordered_traces.append(go.Scatter(x=cell_xs, y=cell_ys, mode='lines', fill='toself', fillcolor=CELL_COLOR, line=dict(color="rgba(0,0,0,0.5)", width=0.5), name="Cells", hoverinfo='name', visible=False))
 
-    # Add all traces to the figure in their determined order
     for trace in ordered_traces:
         fig.add_trace(trace)
 
-    # Create dropdown buttons
-    buttons = [
-        dict(
-            label="None",
-            method="restyle",
-            args=["visible", [False] * len(fig.data)],
-        ),
-        dict(
-            label="All",
-            method="restyle",
-            args=["visible", [True] * len(fig.data)],
-        ),
-    ]
-
-    # Add buttons for individual layers based on the order in ordered_traces
-    for i, trace in enumerate(fig.data):
-        visibility = [False] * len(fig.data)
-        visibility[i] = True # Set only this trace to visible
+    if output_path:
+        buttons = [
+            dict(label="None", method="restyle", args=["visible", [False] * len(fig.data)]),
+            dict(label="All", method="restyle", args=["visible", [True] * len(fig.data)]),
+        ]
+        for i, trace in enumerate(fig.data):
+            visibility = [False] * len(fig.data)
+            visibility[i] = True
+            buttons.append(dict(label=trace.name, method="restyle", args=["visible", visibility]))
         
-        buttons.append(
-            dict(
-                label=trace.name,
-                method="restyle",
-                args=["visible", visibility],
-            )
+        updatemenus = [dict(active=0, buttons=buttons, direction="down", pad={"r": 10, "t": 10}, showactive=True, x=0.01, xanchor="left", y=1.1, yanchor="top")]
+        
+        fig.update_layout(
+            title=f"2D View - {config.beol_stack.technology} ({config.beol_stack.node})",
+            xaxis_title="X (μm)",
+            yaxis_title="Y (μm)",
+            updatemenus=updatemenus,
+            width=800, height=800,
+            xaxis=dict(scaleanchor="y", scaleratio=1),
+            yaxis=dict(autorange="reversed"),
         )
+        fig.write_html(str(output_path), include_plotlyjs="cdn")
+        if open_browser:
+            import webbrowser
+            webbrowser.open(f"file://{output_path.resolve()}")
 
-    updatemenus = [
-        dict(
-            active=0, # "None" is active by default
-            buttons=buttons,
-            direction="down",
-            pad={"r": 10, "t": 10},
-            showactive=True,
-            x=0.01,
-            xanchor="left",
-            y=1.1,
-            yanchor="top",
-        )
-    ]
+    if save_image_layer:
+        found = False
+        for i, trace in enumerate(fig.data):
+            if trace.name == save_image_layer:
+                visibility = [False] * len(fig.data)
+                visibility[i] = True
+                fig.update_layout(
+                    title=f"2D View - Layer: {save_image_layer}",
+                    showlegend=False,
+                    updatemenus=[],
+                )
+                fig.update_traces(visible=False)
+                fig.data[i].visible = True
+                
+                image_path = output_dir / f"{save_image_layer}.png"
+                print(f"Saving image for layer '{save_image_layer}' to {image_path}")
+                fig.write_image(image_path)
+                found = True
+                break
+        if not found:
+            print(f"Warning: Layer '{save_image_layer}' not found for image generation.")
 
-    fig.update_layout(
-        title=f"2D View - {config.beol_stack.technology} ({config.beol_stack.node})",
-        xaxis_title="X (μm)",
-        yaxis_title="Y (μm)",
-        updatemenus=updatemenus,
-        width=800,
-        height=800,
-        xaxis=dict(scaleanchor="y", scaleratio=1),
-        yaxis=dict(autorange="reversed"),
-    )
-
-    fig.write_html(str(output_path), include_plotlyjs="cdn")
-
-    if open_browser:
-        import webbrowser
-        webbrowser.open(f"file://{output_path.resolve()}")
 
 def _in_region_segment(seg, region):
     x_min, y_min, x_max, y_max = region
