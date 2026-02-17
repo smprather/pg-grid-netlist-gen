@@ -19,9 +19,6 @@
   - Power Net: VDD
   - Ground Net: VSS
   - Total Chains: 53
-  - Min IR Drop: N/A (from simulator results)
-  - Avg IR Drop: N/A (from simulator results)
-  - Max IR Drop: N/A (from simulator results)
 
 ** Details Per Layer **
   - RDL: 5 stripes

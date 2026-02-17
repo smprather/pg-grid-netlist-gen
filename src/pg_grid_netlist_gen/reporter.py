@@ -105,9 +105,6 @@ def generate_report(grid: Grid, config: Config) -> str:
     else:
         chain_count = 0
     report_lines.append(f"  - Total Chains: {chain_count}")
-    report_lines.append("  - Min IR Drop: N/A (from simulator results)")
-    report_lines.append("  - Avg IR Drop: N/A (from simulator results)")
-    report_lines.append("  - Max IR Drop: N/A (from simulator results)")
     report_lines.append("")
 
     # Per-Layer Counts
