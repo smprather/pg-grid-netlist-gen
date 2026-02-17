@@ -53,7 +53,9 @@ def _in_region_point(x, y, region):
     return region[0] <= x <= region[2] and region[1] <= y <= region[3]
 
 
-def _stripe_intersections_for_layers(grid: Grid, layer_a: str, layer_b: str) -> list[tuple[float, float, str]]:
+def _stripe_intersections_for_layers(
+    grid: Grid, layer_a: str, layer_b: str
+) -> list[tuple[float, float, str]]:
     """Build via display points from intersections of two stripe layers by net."""
     stripes_a = [s for s in grid.stripes if s.layer == layer_a]
     stripes_b = [s for s in grid.stripes if s.layer == layer_b]
@@ -82,7 +84,9 @@ def _stripe_intersections_for_layers(grid: Grid, layer_a: str, layer_b: str) -> 
     return points
 
 
-def _via_points_from_itf_connection(grid: Grid, config: Config, via_layer: str) -> list[tuple[float, float, str]]:
+def _via_points_from_itf_connection(
+    grid: Grid, config: Config, via_layer: str
+) -> list[tuple[float, float, str]]:
     """Derive via display points from ITF FROM/TO metals for this via layer."""
     itf_via = next((v for v in config.itf_stack.vias if v.name == via_layer), None)
     if itf_via is None:
@@ -102,7 +106,9 @@ def _pin_side_for_cell(cell: CellPlacement, pin_location: str) -> str:
     return pin_location
 
 
-def _pin_xy(cell: CellPlacement, pin_location: str, cell_w_nm: float, cell_h_nm: float) -> tuple[float, float]:
+def _pin_xy(
+    cell: CellPlacement, pin_location: str, cell_w_nm: float, cell_h_nm: float
+) -> tuple[float, float]:
     side = _pin_side_for_cell(cell, pin_location)
     if side == "left":
         return cell.x - (cell_w_nm / 2.0), cell.y
@@ -147,9 +153,19 @@ def _ploc_color(config: Config, net_name: str) -> str:
 
 def _add_cross_section(fig: go.Figure, config: Config) -> None:
     """Add a stack cross-section in subplot row 2."""
-    def _add_rect(x0: float, x1: float, z_bottom: float, z_top: float, color: str) -> None:
+
+    def _add_rect(
+        x0: float, x1: float, z_bottom: float, z_top: float, color: str
+    ) -> None:
         x = [x0, x1, x1, x0, x0, None]
-        y = [z_bottom / 1000.0, z_bottom / 1000.0, z_top / 1000.0, z_top / 1000.0, z_bottom / 1000.0, None]
+        y = [
+            z_bottom / 1000.0,
+            z_bottom / 1000.0,
+            z_top / 1000.0,
+            z_top / 1000.0,
+            z_bottom / 1000.0,
+            None,
+        ]
         fig.add_trace(
             go.Scatter(
                 x=x,
@@ -230,7 +246,9 @@ def _add_cross_section(fig: go.Figure, config: Config) -> None:
     # Normalize via widths to the top-most via layer's side length.
     ref_side = 0.0
     if via_entries:
-        top_entry = max(via_entries, key=lambda t: t[1])  # highest via by stack position
+        top_entry = max(
+            via_entries, key=lambda t: t[1]
+        )  # highest via by stack position
         ref_side = top_entry[3]
     if ref_side <= 0.0:
         ref_side = max((entry[3] for entry in via_entries), default=1.0)
@@ -259,7 +277,9 @@ def render_grid(
     if not (output_path or save_image_layer):
         return
 
-    output_dir = output_dir or (Path(output_path).parent if output_path else Path("output"))
+    output_dir = output_dir or (
+        Path(output_path).parent if output_path else Path("output")
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     region_nm = tuple(c * 1000 for c in viz_region) if viz_region else None
@@ -274,7 +294,9 @@ def render_grid(
 
     generated_metal_layers = {seg.layer for seg in grid.segments}
     bottom_to_top = [c.name for c in reversed(config.itf_stack.conductors)]
-    bottom_four_visible = [name for name in bottom_to_top if name in generated_metal_layers][:4]
+    bottom_four_visible = [
+        name for name in bottom_to_top if name in generated_metal_layers
+    ][:4]
     bottom_four_set = set(bottom_four_visible)
     visible_via_layers = {
         v.name
@@ -309,9 +331,15 @@ def render_grid(
                     y0, y1 = seg.node_a.y - half_w, seg.node_a.y + half_w
                 elif dx < 1e-6:
                     x0, x1 = seg.node_a.x - half_w, seg.node_a.x + half_w
-                    y0, y1 = min(seg.node_a.y, seg.node_b.y), max(seg.node_a.y, seg.node_b.y)
+                    y0, y1 = (
+                        min(seg.node_a.y, seg.node_b.y),
+                        max(seg.node_a.y, seg.node_b.y),
+                    )
                 elif dy < 1e-6:
-                    x0, x1 = min(seg.node_a.x, seg.node_b.x), max(seg.node_a.x, seg.node_b.x)
+                    x0, x1 = (
+                        min(seg.node_a.x, seg.node_b.x),
+                        max(seg.node_a.x, seg.node_b.x),
+                    )
                     y0, y1 = seg.node_a.y - half_w, seg.node_a.y + half_w
                 else:
                     # Non-orthogonal segment (e.g., staple through-segment). Draw as small square.
@@ -320,12 +348,32 @@ def render_grid(
                     y0, y1 = seg.node_a.y - half, seg.node_a.y + half
 
                 xs, ys = by_net.setdefault(seg.net, ([], []))
-                xs.extend([x0 / 1000.0, x1 / 1000.0, x1 / 1000.0, x0 / 1000.0, x0 / 1000.0, None])
-                ys.extend([y0 / 1000.0, y0 / 1000.0, y1 / 1000.0, y1 / 1000.0, y0 / 1000.0, None])
+                xs.extend(
+                    [
+                        x0 / 1000.0,
+                        x1 / 1000.0,
+                        x1 / 1000.0,
+                        x0 / 1000.0,
+                        x0 / 1000.0,
+                        None,
+                    ]
+                )
+                ys.extend(
+                    [
+                        y0 / 1000.0,
+                        y0 / 1000.0,
+                        y1 / 1000.0,
+                        y1 / 1000.0,
+                        y0 / 1000.0,
+                        None,
+                    ]
+                )
 
             if by_net:
                 visible = True if layer_name in bottom_four_visible else "legendonly"
-                for idx, (net_name, (shapes_x, shapes_y)) in enumerate(sorted(by_net.items())):
+                for idx, (net_name, (shapes_x, shapes_y)) in enumerate(
+                    sorted(by_net.items())
+                ):
                     fig.add_trace(
                         go.Scatter(
                             x=shapes_x,
@@ -359,25 +407,65 @@ def render_grid(
                     x0, y0 = x_nm - half_w, y_nm - half_w
                     x1, y1 = x_nm + half_w, y_nm + half_w
                     xs, ys = by_net.setdefault(net_name, ([], []))
-                    xs.extend([x0 / 1000.0, x1 / 1000.0, x1 / 1000.0, x0 / 1000.0, x0 / 1000.0, None])
-                    ys.extend([y0 / 1000.0, y0 / 1000.0, y1 / 1000.0, y1 / 1000.0, y0 / 1000.0, None])
+                    xs.extend(
+                        [
+                            x0 / 1000.0,
+                            x1 / 1000.0,
+                            x1 / 1000.0,
+                            x0 / 1000.0,
+                            x0 / 1000.0,
+                            None,
+                        ]
+                    )
+                    ys.extend(
+                        [
+                            y0 / 1000.0,
+                            y0 / 1000.0,
+                            y1 / 1000.0,
+                            y1 / 1000.0,
+                            y0 / 1000.0,
+                            None,
+                        ]
+                    )
             else:
                 for via in grid.vias:
                     if via.via_layer != layer_name:
                         continue
-                    if region_nm and not _in_region_point(via.node_top.x, via.node_top.y, region_nm):
+                    if region_nm and not _in_region_point(
+                        via.node_top.x, via.node_top.y, region_nm
+                    ):
                         continue
 
                     half_w = via.width / 2.0
                     x0, y0 = via.node_top.x - half_w, via.node_top.y - half_w
                     x1, y1 = via.node_top.x + half_w, via.node_top.y + half_w
                     xs, ys = by_net.setdefault(via.net, ([], []))
-                    xs.extend([x0 / 1000.0, x1 / 1000.0, x1 / 1000.0, x0 / 1000.0, x0 / 1000.0, None])
-                    ys.extend([y0 / 1000.0, y0 / 1000.0, y1 / 1000.0, y1 / 1000.0, y0 / 1000.0, None])
+                    xs.extend(
+                        [
+                            x0 / 1000.0,
+                            x1 / 1000.0,
+                            x1 / 1000.0,
+                            x0 / 1000.0,
+                            x0 / 1000.0,
+                            None,
+                        ]
+                    )
+                    ys.extend(
+                        [
+                            y0 / 1000.0,
+                            y0 / 1000.0,
+                            y1 / 1000.0,
+                            y1 / 1000.0,
+                            y0 / 1000.0,
+                            None,
+                        ]
+                    )
 
             if by_net:
                 visible = True if layer_name in visible_via_layers else "legendonly"
-                for idx, (net_name, (shapes_x, shapes_y)) in enumerate(sorted(by_net.items())):
+                for idx, (net_name, (shapes_x, shapes_y)) in enumerate(
+                    sorted(by_net.items())
+                ):
                     fig.add_trace(
                         go.Scatter(
                             x=shapes_x,
@@ -412,8 +500,12 @@ def render_grid(
                 continue
             x0, y0 = cell.x - cell_w_nm / 2.0, cell.y - cell_h_nm / 2.0
             x1, y1 = cell.x + cell_w_nm / 2.0, cell.y + cell_h_nm / 2.0
-            cell_shapes_x.extend([x0 / 1000.0, x1 / 1000.0, x1 / 1000.0, x0 / 1000.0, x0 / 1000.0, None])
-            cell_shapes_y.extend([y0 / 1000.0, y0 / 1000.0, y1 / 1000.0, y1 / 1000.0, y0 / 1000.0, None])
+            cell_shapes_x.extend(
+                [x0 / 1000.0, x1 / 1000.0, x1 / 1000.0, x0 / 1000.0, x0 / 1000.0, None]
+            )
+            cell_shapes_y.extend(
+                [y0 / 1000.0, y0 / 1000.0, y1 / 1000.0, y1 / 1000.0, y0 / 1000.0, None]
+            )
 
         if cell_shapes_x:
             fig.add_trace(
@@ -437,8 +529,18 @@ def render_grid(
         cell_cfg = config.standard_cells[0]
         cell_w_nm = config.distance_to_nm(cell_cfg.width)
         cell_h_nm = config.distance_to_nm(cell_cfg.height)
-        in_pin = next((p for p in cell_cfg.pins if p.type == "signal" and p.direction == "input"), None)
-        out_pin = next((p for p in cell_cfg.pins if p.type == "signal" and p.direction == "output"), None)
+        in_pin = next(
+            (p for p in cell_cfg.pins if p.type == "signal" and p.direction == "input"),
+            None,
+        )
+        out_pin = next(
+            (
+                p
+                for p in cell_cfg.pins
+                if p.type == "signal" and p.direction == "output"
+            ),
+            None,
+        )
         if in_pin and out_pin:
             in_net_to_cell: dict[str, CellPlacement] = {}
             for c in grid.cells:
@@ -458,7 +560,10 @@ def render_grid(
 
                 x0, y0 = _pin_xy(src, out_pin.location, cell_w_nm, cell_h_nm)
                 x1, y1 = _pin_xy(dst, in_pin.location, cell_w_nm, cell_h_nm)
-                if region_nm and not (_in_region_point(x0, y0, region_nm) or _in_region_point(x1, y1, region_nm)):
+                if region_nm and not (
+                    _in_region_point(x0, y0, region_nm)
+                    or _in_region_point(x1, y1, region_nm)
+                ):
                     continue
 
                 fx.extend([x0 / 1000.0, x1 / 1000.0, None])
@@ -540,7 +645,8 @@ def render_grid(
     fig.update_yaxes(title_text="Height (um)", row=2, col=1)
 
     if output_path:
-        fig.write_html(str(output_path), include_plotlyjs="cdn")
+        # fig.write_html(str(output_path), include_plotlyjs="cdn")
+        fig.write_html(str(output_path))
         if open_browser:
             import webbrowser
 
