@@ -1,121 +1,68 @@
 # Power/Ground Grid Netlist Generator
 
-A Python-based tool for generating SPICE netlists and 2D interactive visualizations of power/ground grids for Back End Of Line (BEOL) metal stacks.
+Generates an ASIC PG grid model from YAML + ITF inputs:
 
-## Project Overview
+1. `output/pg_grid_netlist.sp` (SPICE RC + instances + `.MEAS`)
+2. `output/pg_grid_visualization.html` (2D grid + stack cross-section)
+3. `output/pg_grid_summary.txt` (ASCII report)
 
-This tool takes a YAML configuration file describing the metal layer stackup, materials, standard cells, and grid configuration. It then generates:
+## Requirements
 
-1.  A SPICE netlist model of the power/ground grid, including resistance and capacitance.
-2.  A 2D interactive HTML visualization of the grid, allowing for layer-by-layer inspection.
+- Python `>=3.14`
+- `uv` (recommended)
 
-## Features
-
-*   **Configurable Grid Generation**: Define metal layers, via layers, and standard cell placement through a flexible YAML configuration.
-*   **SPICE Netlist Output**: Generates a detailed SPICE netlist, accounting for metal segment resistance, via resistance, and plate/fringe capacitance to the substrate.
-*   **Interactive 2D Visualization**: Produces an interactive Plotly HTML file, offering:
-    *   A top-down 2D view of the power grid.
-    *   Dropdown menu for selecting and viewing individual layers, or all layers at once.
-    *   Initial view with no layers shown for a clean start.
-    *   Layer ordering in the dropdown and legend that matches the physical BEOL stack (highest to lowest).
-*   **Static Image Export**: Ability to export a static PNG image of any specified layer for documentation purposes.
-*   **Python-based**: Built with Python 3.14, utilizing Pydantic for configuration validation, and Rich-Click for a user-friendly command-line interface.
-
-## Installation and Usage
-
-### Prerequisites
-
-*   Python 3.14 or higher
-*   `uv` package manager (recommended)
-
-### Setup
-
-1.  **Clone the repository**:
-    ```bash
-    git clone https://github.com/smprather/pg-grid-netlist-gen.git
-    cd pg-grid-netlist-gen
-    ```
-2.  **Install dependencies and the project in editable mode**:
-    This will create a virtual environment, install all required packages (including `kaleido` for static image export), and create the `pg_grid_netlist_gen` executable script.
-    ```bash
-    uv pip install -e .
-    ```
-
-### Running the Generator
-
-The primary way to use the tool is through the `pg_grid_netlist_gen` executable script.
+## Setup
 
 ```bash
-./pg_grid_netlist_gen generate <CONFIG_FILE> [OPTIONS]
+uv pip install -e .
 ```
 
-**Example**:
+## Run
+
 ```bash
-./pg_grid_netlist_gen generate pg_grid_netlist_gen.yaml --open-browser --save-image MG2
+./pg_grid_netlist_gen grid_specs.yaml
 ```
 
-This command will:
-*   Use `pg_grid_netlist_gen.yaml` as the configuration.
-*   Generate `output/power_grid.sp` (SPICE netlist).
-*   Generate `output/power_grid.html` (interactive 2D visualization).
-*   Automatically open `output/power_grid.html` in your web browser.
-*   Save a static PNG image of the `MG2` layer to `output/MG2.png`.
+Common options:
+
+```bash
+./pg_grid_netlist_gen grid_specs.yaml --open-browser
+./pg_grid_netlist_gen grid_specs.yaml --output-dir output
+./pg_grid_netlist_gen grid_specs.yaml --viz-region 0,0,10,10
+```
 
 ## Configuration
 
-The `pg_grid_netlist_gen.yaml` file defines the entire grid structure. Key sections include:
+Primary inputs:
 
-*   **`materials`**: Properties of conductive and insulating materials.
-*   **`standard_cells`**: Definitions of standard cells to be placed, including pin names and dimensions.
-*   **`grid`**: Specifies grid size, nets (VDD/VSS), and layer-specific configurations (type: `grid` or `staple`, direction, pitch, width).
-*   **`beol_stack`**: Defines the physical layers of the Back End Of Line, including `metal` and `via` layers, their thickness, minimum width, and pitch, ordered from highest to lowest.
+- `grid_specs.yaml`
+- ITF file referenced by `itf.file` (for example `freepdk3_rctyp.itf`)
 
-## Example Outputs
+Highlights:
 
-### 2D Interactive Visualization
+- Grid layer usage supports stripe (`g`) and staple (`s`) layers.
+- Metal resistance uses ITF `RPSQ`.
+- Via resistance uses ITF `RPV`.
+- Standard-cell PG pins tap directly onto lowest metal grid nodes.
+- IR-drop measurements are generated for both output rise and output fall per instance, with edge mapping based on `standard_cells[].unateness`.
+- Optional external cell model include: `standard_cells[].spice_netlist_file`.
 
-The generated `power_grid.html` provides an interactive view. Below is a static image example of the `MG2` layer:
+## Output Regeneration Hook
 
-![MG2 Layer Visualization](output/MG2.png)
+This repo includes a versioned pre-commit hook at:
 
-[Open the full interactive visualization (power_grid.html)](https://smprather.github.io/pg-grid-netlist-gen)
+- `.githooks/pre-commit`
 
-### SPICE Netlist Snippet
+It regenerates outputs from `grid_specs.yaml` and stages `output/` artifacts before each commit.
 
-A portion of the generated `output/power_grid.sp` file:
+Enable it once per clone:
 
-```spice
-* Power Grid Netlist - FreePDK15
-* Generated by pg_grid_netlist_gen
-* Grid: 10um x 10um
-* Layers: 28
-
-.subckt BUFX12 A Y VDD VSS
-.ends BUFX12
-
-* === Metal Segments (R) ===
-* Layer: MG2
-R_MG2_seg_0 MG2_X_0_Y_0 MG2_X_537_Y_0 237.7m
-R_MG2_seg_1 MG2_X_537_Y_0 MG2_X_1075_Y_0 237.7m
-R_MG2_seg_2 MG2_X_1075_Y_0 MG2_X_1612_Y_0 237.7m
-R_MG2_seg_3 MG2_X_1612_Y_0 MG2_X_2150_Y_0 237.7m
-R_MG2_seg_4 MG2_X_2150_Y_0 MG2_X_2688_Y_0 237.7m
-R_MG2_seg_5 MG2_X_2688_Y_0 MG2_X_3225_Y_0 237.7m
-R_MG2_seg_6 MG2_X_3225_Y_0 MG2_X_3763_Y_0 237.7m
-R_MG2_seg_7 MG2_X_3763_Y_0 MG2_X_4300_Y_0 237.7m
-R_MG2_seg_8 MG2_X_4300_Y_0 MG2_X_4838_Y_0 237.7m
-R_MG2_seg_9 MG2_X_4838_Y_0 MG2_X_5376_Y_0 237.7m
-R_MG2_seg_10 MG2_X_5376_Y_0 MG2_X_5913_Y_0 237.7m
-R_MG2_seg_11 MG2_X_5913_Y_0 MG2_X_6451_Y_0 237.7m
-R_MG2_seg_12 MG2_X_6451_Y_0 MG2_X_6988_Y_0 237.7m
-R_MG2_seg_13 MG2_X_6988_Y_0 MG2_X_7526_Y_0 237.7m
-R_MG2_seg_14 MG2_X_7526_Y_0 MG2_X_8064_Y_0 237.7m
-R_MG2_seg_15 MG2_X_8064_Y_0 MG2_X_8601_Y_0 237.7m
-R_MG2_seg_16 MG2_X_8601_Y_0 MG2_X_9139_Y_0 237.7m
-R_MG2_seg_17 MG2_X_9139_Y_0 MG2_X_9676_Y_0 237.7m
-R_MG2_seg_18 MG2_X_9676_Y_0 MG2_X_10000_Y_0 142.9m
+```bash
+git config core.hooksPath .githooks
 ```
 
-## License
+## Notes
 
-This project is licensed under the MIT License.
+- Default outputs are written under `output/`.
+- The HTML visualization uses legend toggles for layers (no dropdown selector).
+- The cross-section plot is included below the 2D grid view.

@@ -3,27 +3,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
+import random
 
 from pg_grid_netlist_gen.config import Config
 from pg_grid_netlist_gen.geometry import (
     CellPlacement,
     Grid,
     Node,
+    PlocPoint,
     Segment,
     Staple,
     Stripe,
     ViaConnection,
 )
-from pg_grid_netlist_gen.physics import (
-    metal_resistance,
-    total_segment_capacitance,
-    via_resistance,
-)
+from pg_grid_netlist_gen.physics import total_segment_capacitance
 
 
 @dataclass
 class ResolvedLayer:
-    """BEOL + grid layer properties merged together."""
+    """BEOL + grid-layer properties merged together."""
 
     name: str
     layer_type: str  # "grid" or "staple"
@@ -33,17 +32,11 @@ class ResolvedLayer:
     thickness_nm: float
     z_bottom_nm: float
     z_top_nm: float
-    material_name: str
-    conductivity_ms_m: float
-    beol_type: str  # "metal" or "via"
+    resistance_per_square: float
 
 
 def _compute_z_coordinates(config: Config) -> dict[str, tuple[float, float]]:
-    """Walk the BEOL stack bottom-to-top, computing z_bottom and z_top for each layer.
-
-    The BEOL stack is listed top-to-bottom in the YAML. We reverse it so SUB is at z=0.
-    The substrate top surface is our z=0 reference.
-    """
+    """Walk the BEOL stack bottom-to-top and compute z coordinates."""
     layers_bottom_up = list(reversed(config.beol_stack.layers))
     z_coords: dict[str, tuple[float, float]] = {}
     z = 0.0
@@ -52,50 +45,81 @@ def _compute_z_coordinates(config: Config) -> dict[str, tuple[float, float]]:
         if layer.type == "substrate":
             z_coords[layer.name] = (-layer.thickness, 0.0)
             z = 0.0
-        else:
-            z_bottom = z
-            z_top = z + layer.thickness
-            z_coords[layer.name] = (z_bottom, z_top)
+            continue
+
+        z_bottom = z
+        z_top = z + layer.thickness
+        z_coords[layer.name] = (z_bottom, z_top)
+
+        # Vias occupy dielectric height and do not advance the running metal elevation.
+        if layer.type != "via":
             z = z_top
 
     return z_coords
 
 
 def _resolve_layers(config: Config) -> list[ResolvedLayer]:
-    """Resolve grid layer properties from config + BEOL stack."""
+    """Resolve configured/implicit metal layers in BEOL top-to-bottom order."""
     z_coords = _compute_z_coordinates(config)
-    resolved = []
+    resolved: list[ResolvedLayer] = []
 
-    for layer_name in config.grid_layer_order():
-        grid_layer = config.grid.layers[layer_name]
-        beol_layer = config.get_beol_layer(layer_name)
+    metal_layers_in_beol = [l for l in config.beol_stack.layers if l.type == "metal"]
 
-        actual_pitch = grid_layer.pitch * beol_layer.pitch
-        width = grid_layer.width if grid_layer.width is not None else beol_layer.min_width
+    # Direction alternates bottom-up, with the bottom metal always horizontal.
+    directions: dict[str, str] = {}
+    current_direction = "horizontal"
+    for beol_layer in reversed(metal_layers_in_beol):
+        directions[beol_layer.name] = current_direction
+        current_direction = "vertical" if current_direction == "horizontal" else "horizontal"
+
+    lowest_layer = config.lowest_metal_layer_name
+
+    for beol_layer in metal_layers_in_beol:
+        layer_name = beol_layer.name
+        usage = config.grid.layer_usage.get(layer_name)
+
+        if usage is None and layer_name != lowest_layer:
+            continue
+
+        if usage is None:
+            # Implicit lowest-layer behavior.
+            layer_type = "grid"
+            width_nm = beol_layer.min_width or 0.0
+            actual_pitch_nm = config.distance_to_nm(config.standard_cell_placement.row_height)
+        else:
+            layer_type = "grid" if usage.type == "g" else "staple"
+            # Configured layer_usage width/pitch are multipliers:
+            # width = factor * WMIN, pitch = factor * (WMIN + SMIN).
+            base_width_nm = beol_layer.min_width or 0.0
+            base_pitch_nm = beol_layer.pitch or 0.0
+            width_nm = usage.width * base_width_nm
+            actual_pitch_nm = usage.pitch * base_pitch_nm
+
         z_bottom, z_top = z_coords[layer_name]
 
-        mat_name = grid_layer.material or "copper"
-        mat = config.get_material(mat_name)
-
-        resolved.append(ResolvedLayer(
-            name=layer_name,
-            layer_type=grid_layer.type,
-            direction=grid_layer.direction,
-            actual_pitch_nm=actual_pitch,
-            width_nm=width,
-            thickness_nm=beol_layer.thickness,
-            z_bottom_nm=z_bottom,
-            z_top_nm=z_top,
-            material_name=mat_name,
-            conductivity_ms_m=mat.conductivity,
-            beol_type=beol_layer.type,
-        ))
+        resolved.append(
+            ResolvedLayer(
+                name=layer_name,
+                layer_type=layer_type,
+                direction=directions[layer_name],
+                actual_pitch_nm=actual_pitch_nm,
+                width_nm=width_nm,
+                thickness_nm=beol_layer.thickness,
+                z_bottom_nm=z_bottom,
+                z_top_nm=z_top,
+                resistance_per_square=(beol_layer.resistance_per_square or 0.0),
+            )
+        )
 
     return resolved
 
 
 def _node_name(layer: str, x: float, y: float) -> str:
-    return f"{layer}_X_{int(x)}_Y_{int(y)}"
+    return f"{layer}_X_{int(round(x))}_Y_{int(round(y))}"
+
+
+def _staple_key(layer: str, x: float, y: float, net: str) -> tuple[str, int, int, str]:
+    return (layer, int(round(x)), int(round(y)), net)
 
 
 def _get_or_create_node(
@@ -107,6 +131,20 @@ def _get_or_create_node(
     net: str,
 ) -> Node:
     name = _node_name(layer, x, y)
+    if name not in nodes:
+        nodes[name] = Node(name=name, x=x, y=y, z=z, layer=layer, net=net)
+    return nodes[name]
+
+
+def _create_named_node(
+    nodes: dict[str, Node],
+    name: str,
+    layer: str,
+    x: float,
+    y: float,
+    z: float,
+    net: str,
+) -> Node:
     if name not in nodes:
         nodes[name] = Node(name=name, x=x, y=y, z=z, layer=layer, net=net)
     return nodes[name]
@@ -126,10 +164,10 @@ def _generate_stripes(
     cycle: list[str],
 ) -> list[Stripe]:
     """Generate stripes for all grid-type layers."""
-    stripes = []
+    stripes: list[Stripe] = []
 
     for rl in resolved:
-        if rl.layer_type != "grid":
+        if rl.layer_type != "grid" or rl.actual_pitch_nm <= 0:
             continue
 
         if rl.direction == "vertical":
@@ -139,11 +177,17 @@ def _generate_stripes(
                 if pos > grid_size_x:
                     break
                 net = cycle[i % len(cycle)]
-                stripes.append(Stripe(
-                    layer=rl.name, direction="vertical",
-                    position=pos, start=0.0, end=grid_size_y,
-                    width=rl.width_nm, net=net,
-                ))
+                stripes.append(
+                    Stripe(
+                        layer=rl.name,
+                        direction="vertical",
+                        position=pos,
+                        start=0.0,
+                        end=grid_size_y,
+                        width=rl.width_nm,
+                        net=net,
+                    )
+                )
         else:
             n_stripes = int(grid_size_y / rl.actual_pitch_nm) + 1
             for i in range(n_stripes):
@@ -151,11 +195,17 @@ def _generate_stripes(
                 if pos > grid_size_y:
                     break
                 net = cycle[i % len(cycle)]
-                stripes.append(Stripe(
-                    layer=rl.name, direction="horizontal",
-                    position=pos, start=0.0, end=grid_size_x,
-                    width=rl.width_nm, net=net,
-                ))
+                stripes.append(
+                    Stripe(
+                        layer=rl.name,
+                        direction="horizontal",
+                        position=pos,
+                        start=0.0,
+                        end=grid_size_x,
+                        width=rl.width_nm,
+                        net=net,
+                    )
+                )
 
     return stripes
 
@@ -163,83 +213,125 @@ def _generate_stripes(
 def _generate_staples(
     resolved: list[ResolvedLayer],
     config: Config,
-    grid_size_x: float,
-    grid_size_y: float,
-    cycle: list[str],
     stripes: list[Stripe],
 ) -> list[Staple]:
-    """Generate staple pads for all staple-type layers."""
-    staples = []
-    layer_order = config.grid_layer_order()
-
-    # Build indexes: layer -> set of positions, and layer -> position -> net
-    stripe_v_positions: dict[str, dict[float, str]] = {}  # layer -> {x_pos -> net} for vertical
-    stripe_h_positions: dict[str, dict[float, str]] = {}  # layer -> {y_pos -> net} for horizontal
+    """Generate staple pads at intersections of nearest grid layers above and below."""
+    staples: list[Staple] = []
+    by_layer: dict[str, list[Stripe]] = {}
     for s in stripes:
-        if s.direction == "vertical":
-            stripe_v_positions.setdefault(s.layer, {})[s.position] = s.net
-        else:
-            stripe_h_positions.setdefault(s.layer, {})[s.position] = s.net
+        by_layer.setdefault(s.layer, []).append(s)
 
-    for rl in resolved:
+    via_lookup = {(v.from_layer, v.to_layer): v for v in config.itf_stack.vias}
+    via_lookup.update({(b, a): v for (a, b), v in list(via_lookup.items())})
+
+    for idx, rl in enumerate(resolved):
         if rl.layer_type != "staple":
             continue
 
-        idx = layer_order.index(rl.name)
-        above_name = layer_order[idx - 1] if idx > 0 else None
-        below_name = layer_order[idx + 1] if idx < len(layer_order) - 1 else None
+        above = next((x for x in reversed(resolved[:idx]) if x.layer_type == "grid"), None)
+        below = next((x for x in resolved[idx + 1 :] if x.layer_type == "grid"), None)
+        if above is None or below is None:
+            continue
 
-        # Staple size = 2 × min_width of the layer above
-        if above_name:
-            above_rl = _get_resolved(resolved, above_name)
-            staple_size = 2.0 * above_rl.width_nm
-        else:
-            staple_size = 2.0 * rl.width_nm
+        above_stripes = by_layer.get(above.name, [])
+        below_stripes = by_layer.get(below.name, [])
+        if not above_stripes or not below_stripes:
+            continue
 
-        # Collect x and y positions from adjacent layers
-        x_positions: set[float] = set()
-        y_positions: set[float] = set()
+        # Spec rule: staple side = 2x via side length of the via above this staple layer.
+        staple_size = 0.0
+        if idx > 0:
+            upper_adjacent = resolved[idx - 1]
+            itf_via = via_lookup.get((upper_adjacent.name, rl.name))
+            if itf_via and itf_via.area_nm2 > 0.0:
+                staple_size = 2.0 * math.sqrt(itf_via.area_nm2)
 
-        for adj_name in (above_name, below_name):
-            if adj_name is None:
-                continue
-            if adj_name in stripe_v_positions:
-                x_positions.update(stripe_v_positions[adj_name].keys())
-            if adj_name in stripe_h_positions:
-                y_positions.update(stripe_h_positions[adj_name].keys())
+        if staple_size <= 0.0:
+            # Fallback to preserve behavior if via metadata is missing.
+            above_beol = config.get_beol_layer(above.name)
+            staple_size = 2.0 * (above_beol.min_width or above.width_nm)
 
-        # Fill in from pitch if we don't have positions from stripes
-        if not x_positions:
-            n = int(grid_size_x / rl.actual_pitch_nm) + 1
-            x_positions = {i * rl.actual_pitch_nm for i in range(n) if i * rl.actual_pitch_nm <= grid_size_x}
-        if not y_positions:
-            n = int(grid_size_y / rl.actual_pitch_nm) + 1
-            y_positions = {i * rl.actual_pitch_nm for i in range(n) if i * rl.actual_pitch_nm <= grid_size_y}
+        seen: set[tuple[str, int, int, str]] = set()
+        for sa in above_stripes:
+            for sb in below_stripes:
+                if sa.net != sb.net:
+                    continue
 
-        # Build net lookup functions using indexed data
-        above_v = stripe_v_positions.get(above_name, {}) if above_name else {}
-        above_h = stripe_h_positions.get(above_name, {}) if above_name else {}
-        below_v = stripe_v_positions.get(below_name, {}) if below_name else {}
-        below_h = stripe_h_positions.get(below_name, {}) if below_name else {}
+                if sa.direction == "vertical" and sb.direction == "horizontal":
+                    x, y = sa.position, sb.position
+                elif sa.direction == "horizontal" and sb.direction == "vertical":
+                    x, y = sb.position, sa.position
+                else:
+                    continue
 
-        for x in sorted(x_positions):
-            for y in sorted(y_positions):
-                # Determine net from adjacent stripe positions
-                net = (
-                    above_v.get(x)
-                    or above_h.get(y)
-                    or below_v.get(x)
-                    or below_h.get(y)
-                )
-                if net is None:
-                    pos_idx = int(x / rl.actual_pitch_nm) if rl.direction == "vertical" else int(y / rl.actual_pitch_nm)
-                    net = cycle[pos_idx % len(cycle)]
-
-                staples.append(Staple(
-                    layer=rl.name, x=x, y=y, size=staple_size, net=net,
-                ))
+                key = _staple_key(rl.name, x, y, sa.net)
+                if key in seen:
+                    continue
+                seen.add(key)
+                staples.append(Staple(layer=rl.name, x=x, y=y, size=staple_size, net=sa.net))
 
     return staples
+
+
+def _create_staple_segments(
+    config: Config,
+    resolved: list[ResolvedLayer],
+    staples: list[Staple],
+    nodes: dict[str, Node],
+) -> tuple[list[Segment], dict[tuple[str, int, int, str], tuple[Node, Node]]]:
+    """Create one-square staple resistors and return staple-side nodes for via attachment."""
+    segments: list[Segment] = []
+    staple_nodes: dict[tuple[str, int, int, str], tuple[Node, Node]] = {}
+
+    for staple in staples:
+        rl = _get_resolved(resolved, staple.layer)
+        beol = config.get_beol_layer(staple.layer)
+
+        key = _staple_key(staple.layer, staple.x, staple.y, staple.net)
+        up_name = f"{staple.layer}_X_{int(round(staple.x))}_Y_{int(round(staple.y))}_UP"
+        dn_name = f"{staple.layer}_X_{int(round(staple.x))}_Y_{int(round(staple.y))}_DN"
+        up_node = _create_named_node(nodes, up_name, staple.layer, staple.x, staple.y, rl.z_top_nm, staple.net)
+        dn_node = _create_named_node(nodes, dn_name, staple.layer, staple.x, staple.y, rl.z_bottom_nm, staple.net)
+        staple_nodes[key] = (up_node, dn_node)
+
+        r = (beol.resistance_per_square or 0.0) * 1.0
+        segments.append(
+            Segment(
+                node_a=up_node,
+                node_b=dn_node,
+                layer=staple.layer,
+                width=staple.size,
+                thickness=rl.thickness_nm,
+                length=staple.size,
+                net=staple.net,
+                resistance=r,
+                cap_plate=0.0,
+                cap_fringe=0.0,
+            )
+        )
+
+    return segments, staple_nodes
+
+
+def _add_via_nodes(
+    vias: list[ViaConnection],
+    via_beol,
+    itf_via,
+    node_top: Node,
+    node_bot: Node,
+    net: str,
+) -> None:
+    vias.append(
+        ViaConnection(
+            node_top=node_top,
+            node_bot=node_bot,
+            via_layer=via_beol.name,
+            width=via_beol.min_width,
+            height=via_beol.thickness,
+            net=net,
+            resistance=itf_via.resistance_per_via,
+        )
+    )
 
 
 def _place_vias(
@@ -247,134 +339,118 @@ def _place_vias(
     resolved: list[ResolvedLayer],
     stripes: list[Stripe],
     staples: list[Staple],
+    staple_nodes: dict[tuple[str, int, int, str], tuple[Node, Node]],
     nodes: dict[str, Node],
-    z_coords: dict[str, tuple[float, float]],
 ) -> list[ViaConnection]:
-    """Place vias between adjacent grid layers by iterating through the BEOL stack."""
-    vias = []
-    beol_layers = config.beol_stack.layers
-    grid_layer_names = {rl.name for rl in resolved}
+    """Place vias between adjacent resolved layers where shapes intersect."""
+    vias: list[ViaConnection] = []
 
-    # Build indexes for fast lookup
-    stripe_index: dict[str, dict[str, dict[float, str]]] = {}
+    stripes_by_layer: dict[str, list[Stripe]] = {}
     for s in stripes:
-        stripe_index.setdefault(s.layer, {}).setdefault(s.direction, {})[s.position] = s.net
+        stripes_by_layer.setdefault(s.layer, []).append(s)
 
-    staple_index: dict[str, dict[tuple[float, float], str]] = {}
-    staple_by_x: dict[str, dict[float, set[float]]] = {}
-    staple_by_y: dict[str, dict[float, set[float]]] = {}
+    staples_by_layer: dict[str, list[Staple]] = {}
     for s in staples:
-        staple_index.setdefault(s.layer, {})[(s.x, s.y)] = s.net
-        staple_by_x.setdefault(s.layer, {}).setdefault(s.x, set()).add(s.y)
-        staple_by_y.setdefault(s.layer, {}).setdefault(s.y, set()).add(s.x)
+        staples_by_layer.setdefault(s.layer, []).append(s)
 
-    for i, layer in enumerate(beol_layers):
-        if layer.type != "via":
+    via_lookup = {(v.from_layer, v.to_layer): v for v in config.itf_stack.vias}
+    via_lookup.update({(b, a): v for (a, b), v in list(via_lookup.items())})
+
+    for i in range(len(resolved) - 1):
+        top_rl = resolved[i]
+        bot_rl = resolved[i + 1]
+        itf_via = via_lookup.get((top_rl.name, bot_rl.name))
+        if not itf_via:
             continue
 
-        # A via connects the metal layer above and below it in the BEOL stack list
-        if i == 0 or i == len(beol_layers) - 1:
-            continue # Via at the top or bottom of the stack
+        via_beol = config.get_beol_layer(itf_via.name)
 
-        top_metal_layer = beol_layers[i - 1]
-        bot_metal_layer = beol_layers[i + 1]
-
-        # Ensure both metal layers are actually part of the grid we are building
-        if top_metal_layer.name not in grid_layer_names or bot_metal_layer.name not in grid_layer_names:
-            continue
-        
-        top_name = top_metal_layer.name
-        bot_name = bot_metal_layer.name
-        via_layer_name = layer.name
-
-        top_rl = _get_resolved(resolved, top_name)
-        bot_rl = _get_resolved(resolved, bot_name)
-
-        via_beol = config.get_beol_layer(via_layer_name)
-        conductivity = top_rl.conductivity_ms_m # Assume via material is same as top metal for now
-
-        top_si = stripe_index.get(top_name, {})
-        bot_si = stripe_index.get(bot_name, {})
-        top_sti = staple_index.get(top_name, {})
-        bot_sti = staple_index.get(bot_name, {})
-
+        # Grid-to-grid via placement.
         if top_rl.layer_type == "grid" and bot_rl.layer_type == "grid":
-            top_v = top_si.get("vertical", {})
-            top_h = top_si.get("horizontal", {})
-            bot_v = bot_si.get("vertical", {})
-            bot_h = bot_si.get("horizontal", {})
-
-            for tx, tnet in top_v.items():
-                for by, bnet in bot_h.items():
-                    if tnet == bnet:
-                        _add_via(vias, nodes, top_name, bot_name, via_layer_name,
-                                 via_beol, top_rl, bot_rl, tx, by, tnet, conductivity)
-            for ty, tnet in top_h.items():
-                for bx, bnet in bot_v.items():
-                    if tnet == bnet:
-                        _add_via(vias, nodes, top_name, bot_name, via_layer_name,
-                                 via_beol, top_rl, bot_rl, bx, ty, tnet, conductivity)
-
-        elif top_rl.layer_type == "grid" and bot_rl.layer_type == "staple":
-            for direction, positions in top_si.items():
-                for pos, tnet in positions.items():
-                    if direction == "vertical":
-                        for y in sorted(staple_by_x.get(bot_name, {}).get(pos, set())):
-                            if bot_sti.get((pos, y)) == tnet:
-                                _add_via(vias, nodes, top_name, bot_name, via_layer_name,
-                                         via_beol, top_rl, bot_rl, pos, y, tnet, conductivity)
+            top_stripes = stripes_by_layer.get(top_rl.name, [])
+            bot_stripes = stripes_by_layer.get(bot_rl.name, [])
+            for ts in top_stripes:
+                for bs in bot_stripes:
+                    if ts.net != bs.net or ts.direction == bs.direction:
+                        continue
+                    if ts.direction == "vertical":
+                        x, y = ts.position, bs.position
                     else:
-                        for x in sorted(staple_by_y.get(bot_name, {}).get(pos, set())):
-                            if bot_sti.get((x, pos)) == tnet:
-                                _add_via(vias, nodes, top_name, bot_name, via_layer_name,
-                                         via_beol, top_rl, bot_rl, x, pos, tnet, conductivity)
+                        x, y = bs.position, ts.position
 
-        elif top_rl.layer_type == "staple" and bot_rl.layer_type == "grid":
-            for direction, positions in bot_si.items():
-                for pos, bnet in positions.items():
-                    if direction == "vertical":
-                        for y in sorted(staple_by_x.get(top_name, {}).get(pos, set())):
-                            if top_sti.get((pos, y)) == bnet:
-                                _add_via(vias, nodes, top_name, bot_name, via_layer_name,
-                                         via_beol, top_rl, bot_rl, pos, y, bnet, conductivity)
+                    node_top = _get_or_create_node(nodes, top_rl.name, x, y, top_rl.z_bottom_nm, ts.net)
+                    node_bot = _get_or_create_node(nodes, bot_rl.name, x, y, bot_rl.z_bottom_nm, ts.net)
+                    _add_via_nodes(vias, via_beol, itf_via, node_top, node_bot, ts.net)
+            continue
+
+        # Grid-to-staple (top grid, bottom staple).
+        if top_rl.layer_type == "grid" and bot_rl.layer_type == "staple":
+            top_stripes = stripes_by_layer.get(top_rl.name, [])
+            bot_staples = staples_by_layer.get(bot_rl.name, [])
+            for ts in top_stripes:
+                for st in bot_staples:
+                    if ts.net != st.net:
+                        continue
+                    if ts.direction == "vertical":
+                        intersects = abs(st.x - ts.position) <= (st.size + ts.width) / 2.0
                     else:
-                        for x in sorted(staple_by_y.get(top_name, {}).get(pos, set())):
-                            if top_sti.get((x, pos)) == bnet:
-                                _add_via(vias, nodes, top_name, bot_name, via_layer_name,
-                                         via_beol, top_rl, bot_rl, x, pos, bnet, conductivity)
+                        intersects = abs(st.y - ts.position) <= (st.size + ts.width) / 2.0
+                    if not intersects:
+                        continue
 
-        elif top_rl.layer_type == "staple" and bot_rl.layer_type == "staple":
-            for (x, y), tnet in top_sti.items():
-                if bot_sti.get((x, y)) == tnet:
-                    _add_via(vias, nodes, top_name, bot_name, via_layer_name,
-                             via_beol, top_rl, bot_rl, x, y, tnet, conductivity)
+                    key = _staple_key(st.layer, st.x, st.y, st.net)
+                    up_node = staple_nodes[key][0]
+                    node_top = _get_or_create_node(nodes, top_rl.name, st.x, st.y, top_rl.z_bottom_nm, ts.net)
+                    _add_via_nodes(vias, via_beol, itf_via, node_top, up_node, ts.net)
+            continue
+
+        # Staple-to-grid (top staple, bottom grid).
+        if top_rl.layer_type == "staple" and bot_rl.layer_type == "grid":
+            top_staples = staples_by_layer.get(top_rl.name, [])
+            bot_stripes = stripes_by_layer.get(bot_rl.name, [])
+            for st in top_staples:
+                for bs in bot_stripes:
+                    if st.net != bs.net:
+                        continue
+                    if bs.direction == "vertical":
+                        intersects = abs(st.x - bs.position) <= (st.size + bs.width) / 2.0
+                    else:
+                        intersects = abs(st.y - bs.position) <= (st.size + bs.width) / 2.0
+                    if not intersects:
+                        continue
+
+                    key = _staple_key(st.layer, st.x, st.y, st.net)
+                    dn_node = staple_nodes[key][1]
+                    node_bot = _get_or_create_node(nodes, bot_rl.name, st.x, st.y, bot_rl.z_bottom_nm, st.net)
+                    _add_via_nodes(vias, via_beol, itf_via, dn_node, node_bot, st.net)
+            continue
+
+        # Staple-to-staple (adjacent staple layers).
+        if top_rl.layer_type == "staple" and bot_rl.layer_type == "staple":
+            top_staples = staples_by_layer.get(top_rl.name, [])
+            bot_staples = staples_by_layer.get(bot_rl.name, [])
+            bot_by_xy_net = {
+                (int(round(st.x)), int(round(st.y)), st.net): st
+                for st in bot_staples
+            }
+            for st_top in top_staples:
+                key_xy_net = (int(round(st_top.x)), int(round(st_top.y)), st_top.net)
+                st_bot = bot_by_xy_net.get(key_xy_net)
+                if st_bot is None:
+                    continue
+
+                top_key = _staple_key(st_top.layer, st_top.x, st_top.y, st_top.net)
+                bot_key = _staple_key(st_bot.layer, st_bot.x, st_bot.y, st_bot.net)
+                top_nodes = staple_nodes.get(top_key)
+                bot_nodes = staple_nodes.get(bot_key)
+                if top_nodes is None or bot_nodes is None:
+                    continue
+
+                dn_node = top_nodes[1]
+                up_node = bot_nodes[0]
+                _add_via_nodes(vias, via_beol, itf_via, dn_node, up_node, st_top.net)
 
     return vias
-
-
-def _add_via(
-    vias: list[ViaConnection],
-    nodes: dict[str, Node],
-    top_name: str,
-    bot_name: str,
-    via_layer_name: str,
-    via_beol,
-    top_rl: ResolvedLayer,
-    bot_rl: ResolvedLayer,
-    x: float,
-    y: float,
-    net: str,
-    conductivity: float,
-) -> None:
-    node_top = _get_or_create_node(nodes, top_name, x, y, top_rl.z_bottom_nm, net)
-    node_bot = _get_or_create_node(nodes, bot_name, x, y, bot_rl.z_bottom_nm, net)
-    r = via_resistance(via_beol.thickness, via_beol.min_width, conductivity)
-    vias.append(ViaConnection(
-        node_top=node_top, node_bot=node_bot,
-        via_layer=via_layer_name,
-        width=via_beol.min_width, height=via_beol.thickness,
-        net=net, resistance=r,
-    ))
 
 
 def _segment_stripes(
@@ -383,43 +459,34 @@ def _segment_stripes(
     stripes: list[Stripe],
     nodes: dict[str, Node],
 ) -> list[Segment]:
-    """Break stripes into segments at via connection points."""
-    segments = []
+    """Break stripes into segments at via/cell/PLOC connection points."""
+    segments: list[Segment] = []
 
-    # Build index: (layer, position_along_stripe_axis, net) -> [via_coords_along_length]
-    stripe_via_points: dict[tuple[str, float, str], list[float]] = {}
+    stripe_points: dict[tuple[str, float, str], list[float]] = {}
     for stripe in stripes:
         key = (stripe.layer, stripe.position, stripe.net)
-        stripe_via_points.setdefault(key, [])
+        stripe_points.setdefault(key, [])
 
     for node in nodes.values():
-        # Check if this node's layer has stripes
         for stripe in stripes:
             if stripe.layer != node.layer or stripe.net != node.net:
                 continue
-            if stripe.direction == "vertical" and stripe.position == node.x:
-                key = (stripe.layer, stripe.position, stripe.net)
-                stripe_via_points.setdefault(key, []).append(node.y)
-                break  # each node only matches one stripe per layer
-            elif stripe.direction == "horizontal" and stripe.position == node.y:
-                key = (stripe.layer, stripe.position, stripe.net)
-                stripe_via_points.setdefault(key, []).append(node.x)
-                break
+            if stripe.direction == "vertical" and abs(stripe.position - node.x) < 1e-6:
+                stripe_points[(stripe.layer, stripe.position, stripe.net)].append(node.y)
+            elif stripe.direction == "horizontal" and abs(stripe.position - node.y) < 1e-6:
+                stripe_points[(stripe.layer, stripe.position, stripe.net)].append(node.x)
 
     oxide_mat = config.get_material("oxide")
 
     for stripe in stripes:
         rl = _get_resolved(resolved, stripe.layer)
         key = (stripe.layer, stripe.position, stripe.net)
-        via_coords = sorted(set(stripe_via_points.get(key, [])))
+        points = sorted(set([stripe.start, *stripe_points.get(key, []), stripe.end]))
 
-        all_points = sorted(set([stripe.start] + via_coords + [stripe.end]))
-
-        for j in range(len(all_points) - 1):
-            c_start = all_points[j]
-            c_end = all_points[j + 1]
+        for j in range(len(points) - 1):
+            c_start, c_end = points[j], points[j + 1]
             length = c_end - c_start
-            if length <= 0:
+            if length <= 1e-9:
                 continue
 
             if stripe.direction == "vertical":
@@ -431,22 +498,66 @@ def _segment_stripes(
                 node_a = _get_or_create_node(nodes, stripe.layer, c_start, y, rl.z_bottom_nm, stripe.net)
                 node_b = _get_or_create_node(nodes, stripe.layer, c_end, y, rl.z_bottom_nm, stripe.net)
 
-            r = metal_resistance(length, rl.width_nm, rl.thickness_nm, rl.conductivity_ms_m)
+            if rl.width_nm > 0 and rl.resistance_per_square > 0:
+                r = rl.resistance_per_square * (length / rl.width_nm)
+            else:
+                r = 0.0
             cp, cf, _ = total_segment_capacitance(
-                rl.width_nm, length, rl.thickness_nm,
+                rl.width_nm,
+                length,
+                rl.thickness_nm,
                 rl.z_bottom_nm,
-                oxide_mat.relative_permittivity,
+                oxide_mat.get("relative_permittivity", 2.5),
             )
-
-            segments.append(Segment(
-                node_a=node_a, node_b=node_b,
-                layer=stripe.layer, width=rl.width_nm,
-                thickness=rl.thickness_nm, length=length,
-                net=stripe.net, resistance=r,
-                cap_plate=cp, cap_fringe=cf,
-            ))
-
+            segments.append(
+                Segment(
+                    node_a=node_a,
+                    node_b=node_b,
+                    layer=stripe.layer,
+                    width=rl.width_nm,
+                    thickness=rl.thickness_nm,
+                    length=length,
+                    net=stripe.net,
+                    resistance=r,
+                    cap_plate=cp,
+                    cap_fringe=cf,
+                )
+            )
     return segments
+
+
+def _chain_standard_cells(cells: list[CellPlacement], config: Config, rng: random.Random) -> None:
+    """Modify pin connections to chain cells together."""
+    if not cells:
+        return
+
+    rng.shuffle(cells)
+
+    cell_cfg = config.standard_cells[0]
+    input_pins = [p.name for p in cell_cfg.pins if p.direction == "input" and p.type == "signal"]
+    output_pins = [p.name for p in cell_cfg.pins if p.direction == "output" and p.type == "signal"]
+    if not input_pins or not output_pins:
+        return
+
+    input_pin = input_pins[0]
+    output_pin = output_pins[0]
+
+    max_chain_len = config.spice_netlist.instance_chains["max_instance_count_per_chain"]
+
+    chain_num = 0
+    for i in range(0, len(cells), max_chain_len):
+        chain = cells[i : i + max_chain_len]
+        chain[0].pin_connections[input_pin] = f"CHAIN_{chain_num}_IN"
+
+        for j in range(len(chain) - 1):
+            cell_a = chain[j]
+            cell_b = chain[j + 1]
+            connection_net = f"chain_{chain_num}_link_{j}"
+            cell_a.pin_connections[output_pin] = connection_net
+            cell_b.pin_connections[input_pin] = connection_net
+
+        chain[-1].pin_connections[output_pin] = f"CHAIN_{chain_num}_OUT"
+        chain_num += 1
 
 
 def _place_standard_cells(
@@ -454,102 +565,209 @@ def _place_standard_cells(
     resolved: list[ResolvedLayer],
     stripes: list[Stripe],
     nodes: dict[str, Node],
+    grid_size_x: float,
+    rng: random.Random,
 ) -> list[CellPlacement]:
-    """Place standard cells along M1 stripes."""
-    cells = []
-    layer_order = config.grid_layer_order()
+    """Place standard cells on the lowest available grid layer."""
+    cells: list[CellPlacement] = []
 
-    m1_name = layer_order[-1]
-    m1_rl = _get_resolved(resolved, m1_name)
-    m1_stripes = sorted(
-        [s for s in stripes if s.layer == m1_name],
-        key=lambda s: s.position,
-    )
-
-    if len(m1_stripes) < 2:
+    available_grid_layers = [rl for rl in resolved if rl.layer_type == "grid"]
+    if not available_grid_layers:
+        return cells
+    placement_layer = available_grid_layers[-1].name
+    if not any(rl.name == placement_layer for rl in resolved):
         return cells
 
+    layer_rl = _get_resolved(resolved, placement_layer)
+    layer_stripes = sorted([s for s in stripes if s.layer == placement_layer], key=lambda s: s.position)
+    if len(layer_stripes) < 2:
+        return cells
+
+    power_net_name = config.pg_nets.power.name
+    ground_net_name = config.pg_nets.ground.name
+
     cell_cfg = config.standard_cells[0]
-    cell_width = cell_cfg.size["x"]
-    distance_apart = cell_cfg.distance_apart_um
+    cell_width_nm = config.distance_to_nm(cell_cfg.width)
+    half_w = cell_width_nm / 2.0
+
+    site_w_nm = config.distance_to_nm(config.standard_cell_placement.site_width)
+    min_cc_x_nm = config.distance_to_nm(config.standard_cell_placement.min_space["x"])
+    step_nm = max(min_cc_x_nm, cell_width_nm)
+
+    stagger_cfg = config.standard_cell_placement.stagger_row_start
+    stagger_range_nm = config.distance_to_nm(float(stagger_cfg.get("range", 0.0)))
+    stagger_random = bool(stagger_cfg.get("random", False))
 
     nc_counter = 0
+    logical_row = 0
 
-    for row_idx in range(len(m1_stripes) - 1):
-        stripe_a = m1_stripes[row_idx]
-        stripe_b = m1_stripes[row_idx + 1]
+    for row_idx in range(len(layer_stripes) - 1):
+        stripe_a = layer_stripes[row_idx]
+        stripe_b = layer_stripes[row_idx + 1]
+        if {stripe_a.net, stripe_b.net} != {power_net_name, ground_net_name}:
+            continue
 
-        y_top = stripe_a.position
-        y_bot = stripe_b.position
-        row_height = y_bot - y_top
-
-        flipped = row_idx % 2 == 1
-
-        if not flipped:
-            vdd_stripe = stripe_a
-            vss_stripe = stripe_b
+        flipped = logical_row % 2 == 1
+        if flipped:
+            vdd_stripe = stripe_a if stripe_a.net == power_net_name else stripe_b
+            vss_stripe = stripe_b if vdd_stripe is stripe_a else stripe_a
         else:
-            vss_stripe = stripe_a
-            vdd_stripe = stripe_b
+            vdd_stripe = stripe_b if stripe_b.net == power_net_name else stripe_a
+            vss_stripe = stripe_a if vdd_stripe is stripe_b else stripe_b
 
-        cell_y = y_top + row_height / 2.0
-        x = distance_apart / 2.0
+        cell_y_nm = (vdd_stripe.position + vss_stripe.position) / 2.0
 
+        if stagger_range_nm > 0:
+            if stagger_random:
+                row_offset_nm = rng.uniform(0.0, stagger_range_nm)
+            else:
+                row_offset_nm = stagger_range_nm if logical_row % 2 else 0.0
+        else:
+            row_offset_nm = 0.0
+
+        left_edge_nm = math.floor(row_offset_nm / site_w_nm) * site_w_nm
         col_idx = 0
-        while x + cell_width / 2.0 <= stripe_a.end:
-            instance_name = f"XCELL_R{row_idx}_C{col_idx}"
-            cell_x = x + cell_width / 2.0
 
-            pin_connections = {}
-            for pin in cell_cfg.instance_pins:
-                if pin == "VDD":
-                    vdd_node = _get_or_create_node(
-                        nodes, m1_name, cell_x, vdd_stripe.position,
-                        m1_rl.z_bottom_nm, "VDD",
+        while left_edge_nm + cell_width_nm <= grid_size_x + 1e-6:
+            cell_x_nm = left_edge_nm + half_w
+            instance_name = f"XCELL_R{logical_row}_C{col_idx}"
+
+            pin_connections: dict[str, str] = {}
+            for pin in cell_cfg.pins:
+                if pin.type in {"power", "ground"}:
+                    net_name = power_net_name if pin.name == power_net_name else ground_net_name
+                    stripe = vdd_stripe if net_name == power_net_name else vss_stripe
+                    node = _get_or_create_node(
+                        nodes,
+                        placement_layer,
+                        cell_x_nm,
+                        stripe.position,
+                        layer_rl.z_bottom_nm,
+                        net_name,
                     )
-                    pin_connections["VDD"] = vdd_node.name
-                elif pin == "VSS":
-                    vss_node = _get_or_create_node(
-                        nodes, m1_name, cell_x, vss_stripe.position,
-                        m1_rl.z_bottom_nm, "VSS",
-                    )
-                    pin_connections["VSS"] = vss_node.name
+                    pin_connections[pin.name] = node.name
                 else:
-                    pin_connections[pin] = f"NC_{nc_counter}"
+                    pin_connections[pin.name] = f"NC_{pin.name}_{nc_counter}"
                     nc_counter += 1
 
-            cells.append(CellPlacement(
-                instance_name=instance_name,
-                cell_name=cell_cfg.cell,
-                x=cell_x, y=cell_y,
-                row=row_idx, flipped=flipped,
-                pin_connections=pin_connections,
-            ))
+            cells.append(
+                CellPlacement(
+                    instance_name=instance_name,
+                    cell_name=cell_cfg.name,
+                    x=cell_x_nm,
+                    y=cell_y_nm,
+                    row=logical_row,
+                    flipped=flipped,
+                    pin_connections=pin_connections,
+                )
+            )
 
-            x += distance_apart
+            next_left = left_edge_nm + step_nm
+            left_edge_nm = math.ceil(next_left / site_w_nm) * site_w_nm
             col_idx += 1
 
+        logical_row += 1
+
+    _chain_standard_cells(cells, config, rng)
     return cells
+
+
+def _generate_plocs(
+    config: Config,
+    resolved: list[ResolvedLayer],
+    stripes: list[Stripe],
+    nodes: dict[str, Node],
+    grid_size_x: float,
+    grid_size_y: float,
+) -> list[PlocPoint]:
+    """Generate top-layer PLOC points and snap to valid PG stripes."""
+    top_grid = next((rl for rl in resolved if rl.layer_type == "grid"), None)
+    if top_grid is None:
+        return []
+
+    top_stripes = [s for s in stripes if s.layer == top_grid.name]
+    if not top_stripes:
+        return []
+
+    power_net = config.pg_nets.power.name
+    ground_net = config.pg_nets.ground.name
+
+    pitch_nm = config.distance_to_nm(config.ploc.pitch)
+    x0 = config.distance_to_nm(config.ploc.offset_from_origin["x"])
+    y0 = config.distance_to_nm(config.ploc.offset_from_origin["y"])
+    if pitch_nm <= 0:
+        return []
+
+    plocs: list[PlocPoint] = []
+    seen_nodes: set[str] = set()
+
+    row = 0
+    y = y0
+    while y <= grid_size_y + 1e-6:
+        x = x0 + (pitch_nm / 2.0 if config.ploc.staggered and row % 2 else 0.0)
+        col = 0
+        while x <= grid_size_x + 1e-6:
+            desired_net = power_net if col % 2 == 0 else ground_net
+            candidates = [s for s in top_stripes if s.net == desired_net]
+            if candidates:
+                if top_grid.direction == "vertical":
+                    snap = min(candidates, key=lambda s: abs(s.position - x))
+                    sx, sy = snap.position, y
+                else:
+                    snap = min(candidates, key=lambda s: abs(s.position - y))
+                    sx, sy = x, snap.position
+
+                node = _get_or_create_node(nodes, top_grid.name, sx, sy, top_grid.z_bottom_nm, desired_net)
+                if node.name not in seen_nodes:
+                    seen_nodes.add(node.name)
+                    plocs.append(PlocPoint(node_name=node.name, x=sx, y=sy, layer=top_grid.name, net=desired_net))
+
+            x += pitch_nm
+            col += 1
+
+        y += pitch_nm
+        row += 1
+
+    return plocs
 
 
 def build_grid(config: Config) -> Grid:
     """Build the complete power grid from configuration."""
+    rng = config.make_rng()
     resolved = _resolve_layers(config)
-    z_coords = _compute_z_coordinates(config)
     nodes: dict[str, Node] = {}
 
-    grid_size_x = config.grid.grid_size.x
-    grid_size_y = config.grid.grid_size.y
-    cycle = config.grid.cycle
+    grid_size_y = config.grid.size["rows"] * config.distance_to_nm(config.standard_cell_placement.row_height)
+    grid_size_x = config.grid.size["sites"] * config.distance_to_nm(config.standard_cell_placement.site_width)
 
-    stripes = _generate_stripes(resolved, grid_size_x, grid_size_y, cycle)
-    staples = _generate_staples(resolved, config, grid_size_x, grid_size_y, cycle, stripes)
-    vias = _place_vias(config, resolved, stripes, staples, nodes, z_coords)
+    nets = [config.pg_nets.power.name, config.pg_nets.ground.name]
+
+    stripes = _generate_stripes(resolved, grid_size_x, grid_size_y, nets)
+    staples = _generate_staples(resolved, config, stripes)
+    staple_segments, staple_nodes = _create_staple_segments(config, resolved, staples, nodes)
+    vias = _place_vias(config, resolved, stripes, staples, staple_nodes, nodes)
+    cells = _place_standard_cells(config, resolved, stripes, nodes, grid_size_x, rng)
+    plocs = _generate_plocs(config, resolved, stripes, nodes, grid_size_x, grid_size_y)
     segments = _segment_stripes(resolved, config, stripes, nodes)
-    cells = _place_standard_cells(config, resolved, stripes, nodes)
+    segments.extend(staple_segments)
+
+    power_net = config.pg_nets.power.name
+    ground_net = config.pg_nets.ground.name
+    power_plocs = sum(1 for p in plocs if p.net == power_net)
+    ground_plocs = sum(1 for p in plocs if p.net == ground_net)
+    if power_plocs < 1 or ground_plocs < 1:
+        raise ValueError(
+            "PLOC generation failed: expected at least one power and one ground PLOC "
+            f"(power={power_plocs}, ground={ground_plocs}). "
+            "Adjust ploc.pitch and/or ploc.offset_from_origin to place valid points in-grid."
+        )
 
     return Grid(
-        stripes=stripes, staples=staples,
-        segments=segments, vias=vias,
-        cells=cells, nodes=nodes,
+        stripes=stripes,
+        staples=staples,
+        segments=segments,
+        vias=vias,
+        cells=cells,
+        plocs=plocs,
+        nodes=nodes,
     )

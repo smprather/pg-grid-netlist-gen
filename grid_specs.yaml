@@ -1,0 +1,110 @@
+# This can be set to a floating-point number for repeatable results, or "random"
+# for a new randomized run. I could have different random configuration for the different random
+# functions, but it's good enough to just have a global setting.
+random_seed_value: 0.0
+itf:
+  file: freepdk3_rctyp.itf
+  units: um
+units:
+  distance: um
+  capacitance: ff
+  resistance: ohms
+  time: ps
+beol_thickness: 0.100
+standard_cells:
+  - name: BUFX12
+    # 7 track
+    height: 0.315
+    # 15*CPPs
+    width: 0.675
+    pins:
+      - name: A
+        type: signal
+        direction: input
+        location: left
+      - name: Y
+        type: signal
+        direction: output
+        location: right
+      - name: VDD
+        type: power
+        location: top
+      - name: VSS
+        type: ground
+        location: bottom
+    spice_port_order: A Y VDD VSS
+    spice_netlist_file: BUFX12.spi
+    unateness: positive
+# Pad location points
+ploc:
+  pitch: 10
+  staggered: true
+  offset_from_origin:
+    x: 5
+    y: 5
+  visualizer_render_diameter: 1
+spice_netlist:
+  standard_cell_output_load:
+    resistance: 200
+    capacitance: 100
+    number_pi_segments: 2
+    last_buffer_in_chain:
+      resistance: 200
+      capacitance: 500
+  transient_simulation:
+    total_time: 2000
+    time_step: 5
+  chain_input_stimulus:
+    period: 500
+    # From 0% to 100%
+    transition_time: 20
+  instance_chains:
+    max_instance_count_per_chain: 5
+  ir_drop_measurement:
+    averaging_window:
+      # % of input transition
+      start: 10
+      # % of output transition
+      end: 75
+standard_cell_placement:
+  # 7 tracks
+  row_height: 0.315
+  # 1 CPP
+  site_width: 0.045
+  min_space:
+    x: 4.0
+    y: 0.0
+  # Set the range to 0.0 to disable staggered start points
+  # If random=false, then alternate between 0.0 offset and the value of range offset
+  stagger_row_start:
+    range: 5.0
+    random: true
+pg_nets:
+  power:
+    name: "VDD"
+    voltage: 0.825
+  ground:
+    name: "VSS"
+grid:
+  size:
+    rows: 50
+    sites: 500
+  # The width and pitch are in terms of WMIN, and SMIN.
+  # For example, if width=1.0, then the actual width is 1.0 * WMIN
+  # For example, if pitch=1.0, then the actual pitch is 1.0 * WMIN+SMIN
+  layer_usage:
+    RDL: {type: g, width: 1.0, pitch: 1.0}
+    M13: {type: g, width: 1.0, pitch: 1.0}
+    M12: {type: s, width: 1.0, pitch: 1.0}
+    M11: {type: s, width: 1.0, pitch: 1.0}
+    M10: {type: s, width: 1.0, pitch: 1.0}
+    M9: {type: s, width: 1.0, pitch: 1.0}
+    M8: {type: g, width: 1.0, pitch: 5.0}
+    M7: {type: g, width: 1.0, pitch: 5.0}
+    M6: {type: s, width: 1.0, pitch: 1.0}
+    M5: {type: s, width: 1.0, pitch: 1.0}
+    M4: {type: s, width: 1.0, pitch: 1.0}
+    M3: {type: s, width: 1.0, pitch: 1.0}
+    M2: {type: g, width: 1.0, pitch: 5.0}
+    M1: {type: g, width: 1.0, pitch: 5.0}
+    # M0: {type: g, width: 1.0, pitch: 7.0}

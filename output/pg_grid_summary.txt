@@ -1,0 +1,49 @@
+--- Power Grid Generation Report ---
+
+** Grid Dimensions **
+  - Technology: FreePDK3_RCtyp
+  - Effective Seed: 0.0
+  - Size (X x Y): 22.50 um x 15.75 um
+
+** Component Counts **
+  - Metal Stripes: 481
+  - Metal Segments (after breaking): 52271
+  - Vias: 35377
+  - Netlist Nodes: 70516
+  - Placed Standard Cells: 263
+
+** Netlist Details **
+  - Resistors: 88125
+  - Capacitors: 31244
+  - Total Grid Capacitance (to substrate): 0.1965 pF
+  - Power Net: VDD
+  - Ground Net: VSS
+  - Total Chains: 53
+  - Min IR Drop: N/A (from simulator results)
+  - Avg IR Drop: N/A (from simulator results)
+  - Max IR Drop: N/A (from simulator results)
+
+** Details Per Layer **
+  - RDL: 5 stripes
+  - M13: 71 stripes
+  - VRDL: 178 vias
+  - V12: 1420 vias
+  - V11: 1420 vias
+  - V10: 1420 vias
+  - V9: 1420 vias
+  - M8: 40 stripes
+  - V8: 1420 vias
+  - M7: 57 stripes
+  - V7: 1140 vias
+  - V6: 3021 vias
+  - V5: 3021 vias
+  - V4: 3021 vias
+  - V3: 3021 vias
+  - M2: 106 stripes
+  - V2: 3021 vias
+  - M1: 151 stripes
+  - V1: 8003 vias
+  - M0: 51 stripes
+  - V0: 3851 vias
+
+--- End of Report ---

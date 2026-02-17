@@ -1,0 +1,2 @@
+.subckt BUFX12 A Y VDD VSS
+.ends

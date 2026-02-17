@@ -85,6 +85,17 @@ class CellPlacement:
 
 
 @dataclass
+class PlocPoint:
+    """A snapped PLOC supply connection point."""
+
+    node_name: str
+    x: float  # nm
+    y: float  # nm
+    layer: str
+    net: str
+
+
+@dataclass
 class Grid:
     """Complete generated grid, the central data structure."""
 
@@ -93,4 +104,5 @@ class Grid:
     segments: list[Segment] = field(default_factory=list)
     vias: list[ViaConnection] = field(default_factory=list)
     cells: list[CellPlacement] = field(default_factory=list)
+    plocs: list[PlocPoint] = field(default_factory=list)
     nodes: dict[str, Node] = field(default_factory=dict)

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+config_file="grid_specs.yaml"
+
+if [[ ! -x "./pg_grid_netlist_gen" ]]; then
+  echo "[pre-commit] ERROR: ./pg_grid_netlist_gen is missing or not executable."
+  exit 1
+fi
+
+if [[ ! -f "$config_file" ]]; then
+  echo "[pre-commit] ERROR: $config_file not found."
+  exit 1
+fi
+
+echo "[pre-commit] Regenerating outputs from $config_file ..."
+./pg_grid_netlist_gen "$config_file"
+
+echo "[pre-commit] Staging regenerated output files ..."
+git add output/pg_grid_netlist.sp output/pg_grid_summary.txt output/pg_grid_visualization.html
+
+echo "[pre-commit] Done."
