@@ -635,8 +635,8 @@ def _place_standard_cells(
             pin_connections: dict[str, str] = {}
             for pin in cell_cfg.pins:
                 if pin.type in {"power", "ground"}:
-                    net_name = power_net_name if pin.name == power_net_name else ground_net_name
-                    stripe = vdd_stripe if net_name == power_net_name else vss_stripe
+                    net_name = power_net_name if pin.type == "power" else ground_net_name
+                    stripe = vdd_stripe if pin.type == "power" else vss_stripe
                     node = _get_or_create_node(
                         nodes,
                         placement_layer,

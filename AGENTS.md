@@ -151,6 +151,7 @@ The YAML file (currently `grid_specs.yaml`) defines technology, grid, placement,
 - Anywhere an instance power or ground pin lands on the lowest layer of metal, that segement of metal must be broken into two
   segments where the pin lands. This is not required if the cell pin lands exactly on the edge of a segment of metal. In this
   case, just tap the cell into the grid at the pre-existing node.
+- Add HSPICE .PROBE to probe the voltage of every pin of every instance. `.PROBE V(X\*)`
 
 ### RC extraction formulas
 
@@ -179,6 +180,9 @@ For a staple layer between adjacent routed layers (example `M7-V6-M6-V5-M5`), ve
 - Cell top/bottom edges MUST lie on PG metal centerlines so power pins land on power metal and ground pins on ground metal.
 - Cell placement MUST honor row and site grids.
 - Cells SHOULD be distributed according to `standard_cell_placement.min_space`.
+- PG net names need not match standard-cell PG pin names.
+  - Connectivity is established by matching a power-type PG net to a power-type pin on the cell.
+    Same for ground type net to pin.
 
 ### Chain generation
 
@@ -224,7 +228,6 @@ The generator MUST fail fast with a clear error message when validation fails.
 - `grid.size.rows >= 1` and `grid.size.sites >= 1`.
 - `max_instance_count_per_chain >= 1`.
 - Averaging-window percentages MUST satisfy `0 <= start < end <= 100`.
-- PG net names MUST match standard-cell power/ground pin names.
 - `spice_port_order` pins MUST exactly match declared pin names for each standard cell.
 
 ## Visualization Requirements
@@ -270,6 +273,15 @@ Implementation SHOULD follow this sequence:
 1. Extract RC network and generate SPICE.
 1. Add `.MEAS` statements for per-instance, max, and average IR drop.
 1. Generate visualization and ASCII summary outputs.
+
+## Documentation Generation Rules
+
+1. Create and maintain the top-level README.md.
+
+- MUST contain a link to the live-demo at https://smprather.github.io/pg-grid-netlist-gen
+- MUST contain a link to the configuration file documentation.
+
+2. Create the configuration file documentation in the docs/ directory.
 
 ## Tech Stack
 

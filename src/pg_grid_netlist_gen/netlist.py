@@ -10,6 +10,10 @@ from pg_grid_netlist_gen.config import Config
 from pg_grid_netlist_gen.geometry import Grid
 
 
+def _first_pin_name_of_type(cell_cfg, pin_type: str) -> str | None:
+    return next((p.name for p in cell_cfg.pins if p.type == pin_type), None)
+
+
 def _write_chain_stimulus(f: TextIO, grid: Grid, config: Config):
     f.write("* === Chain Input Stimulus ===\n")
     stimulus_cfg = config.spice_netlist.chain_input_stimulus
@@ -197,8 +201,6 @@ def _write_capacitors(f: TextIO, grid: Grid) -> None:
 
 def _write_cells(f: TextIO, grid: Grid, config: Config) -> None:
     f.write("* === Standard Cell Instances ===\n")
-    power_pin_name = config.pg_nets.power.name
-    ground_pin_name = config.pg_nets.ground.name
 
     for cell in grid.cells:
         cell_cfg = next(c for c in config.standard_cells if c.name == cell.cell_name)
@@ -206,11 +208,7 @@ def _write_cells(f: TextIO, grid: Grid, config: Config) -> None:
         pin_nodes: list[str] = []
         for pin in pin_order:
             metal_node = cell.pin_connections.get(pin, f"NC_{pin}")
-            if pin in {power_pin_name, ground_pin_name}:
-                # Cell PG pins are directly tapped to the lowest grid-layer node.
-                pin_nodes.append(metal_node)
-            else:
-                pin_nodes.append(metal_node)
+            pin_nodes.append(metal_node)
         pins_str = " ".join(pin_nodes)
         f.write(f"{cell.instance_name} {pins_str} {cell.cell_name}\n")
     f.write("\n")
@@ -219,12 +217,11 @@ def _write_analysis(f: TextIO, config: Config) -> None:
     f.write("* === Analysis ===\n")
     sim = config.spice_netlist.transient_simulation
     f.write(f".tran {sim['time_step']}{config.units.time} {sim['total_time']}{config.units.time}\n")
+    f.write(".PROBE V(X*)\n")
     f.write("\n")
 
 def _write_measurements(f: TextIO, grid: Grid, config: Config) -> None:
     f.write("* === IR Drop Measurements ===\n")
-    power_pin_name = config.pg_nets.power.name
-    gnd_pin_name = config.pg_nets.ground.name
     cell_cfg_by_name = {c.name: c for c in config.standard_cells}
 
     window_cfg = config.spice_netlist.ir_drop_measurement["averaging_window"]
@@ -239,13 +236,18 @@ def _write_measurements(f: TextIO, grid: Grid, config: Config) -> None:
     measure_names: list[str] = []
 
     for cell in grid.cells:
+        cell_cfg = cell_cfg_by_name.get(cell.cell_name)
+        if cell_cfg is None:
+            continue
+
+        power_pin_name = _first_pin_name_of_type(cell_cfg, "power")
+        gnd_pin_name = _first_pin_name_of_type(cell_cfg, "ground")
+        if not power_pin_name or not gnd_pin_name:
+            continue
+
         vdd_node = cell.pin_connections.get(power_pin_name)
         vss_node = cell.pin_connections.get(gnd_pin_name)
         if not vdd_node or not vss_node:
-            continue
-
-        cell_cfg = cell_cfg_by_name.get(cell.cell_name)
-        if cell_cfg is None:
             continue
 
         input_pin_name = next(

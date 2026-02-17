@@ -303,6 +303,16 @@ def render_grid(
         for v in config.itf_stack.vias
         if v.from_layer in bottom_four_set or v.to_layer in bottom_four_set
     }
+    configured_visible_objects: set[str] | None = None
+    if config.visualizer and config.visualizer.initial_visible_objects is not None:
+        configured_visible_objects = {
+            str(name).strip() for name in config.visualizer.initial_visible_objects if str(name).strip()
+        }
+
+    def _legend_visibility(name: str, default_visible: bool) -> bool | str:
+        if configured_visible_objects is None:
+            return True if default_visible else "legendonly"
+        return True if name in configured_visible_objects else "legendonly"
 
     # Draw metal and via traces in ITF top-down connectivity order.
     layer_draw_order = _draw_order_from_itf(config)
@@ -370,7 +380,7 @@ def render_grid(
                 )
 
             if by_net:
-                visible = True if layer_name in bottom_four_visible else "legendonly"
+                visible = _legend_visibility(layer_name, layer_name in bottom_four_visible)
                 for idx, (net_name, (shapes_x, shapes_y)) in enumerate(
                     sorted(by_net.items())
                 ):
@@ -462,7 +472,7 @@ def render_grid(
                     )
 
             if by_net:
-                visible = True if layer_name in visible_via_layers else "legendonly"
+                visible = _legend_visibility(layer_name, layer_name in visible_via_layers)
                 for idx, (net_name, (shapes_x, shapes_y)) in enumerate(
                     sorted(by_net.items())
                 ):
@@ -518,7 +528,7 @@ def render_grid(
                     line=dict(color="rgba(0,0,0,0.5)", width=0.6),
                     name="Cells",
                     hoverinfo="name",
-                    visible=True,
+                    visible=_legend_visibility("Cells", True),
                 ),
                 row=1,
                 col=1,
@@ -579,7 +589,7 @@ def render_grid(
                         name="Flight Lines",
                         legendgroup="flight_lines",
                         hoverinfo="name",
-                        visible="legendonly",
+                        visible=_legend_visibility("Flight Lines", False),
                     ),
                     row=1,
                     col=1,
@@ -623,7 +633,11 @@ def render_grid(
                     hoverinfo="text",
                     hovertext=f"PLOC:{net_name}",
                     hovertemplate="%{hovertext}<extra></extra>",
-                    visible=True,
+                    visible=(
+                        _legend_visibility(f"PLOC:{net_name}", True)
+                        if configured_visible_objects is None or "PLOC" not in configured_visible_objects
+                        else True
+                    ),
                 ),
                 row=1,
                 col=1,

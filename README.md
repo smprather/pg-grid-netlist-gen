@@ -6,6 +6,11 @@ Generates an ASIC PG grid model from YAML + ITF inputs:
 2. `output/pg_grid_visualization.html` (2D grid + stack cross-section)
 3. `output/pg_grid_summary.txt` (ASCII report)
 
+## Links
+
+- Live demo: https://smprather.github.io/pg-grid-netlist-gen
+- Configuration documentation: `docs/configuration.md`
+
 ## Requirements
 
 - Python `>=3.14`
@@ -28,7 +33,6 @@ Common options:
 ```bash
 ./pg_grid_netlist_gen grid_specs.yaml --open-browser
 ./pg_grid_netlist_gen grid_specs.yaml --output-dir output
-./pg_grid_netlist_gen grid_specs.yaml --viz-region 0,0,10,10
 ```
 
 ## Configuration
@@ -43,9 +47,10 @@ Highlights:
 - Grid layer usage supports stripe (`g`) and staple (`s`) layers.
 - Metal resistance uses ITF `RPSQ`.
 - Via resistance uses ITF `RPV`.
-- Standard-cell PG pins tap directly onto lowest metal grid nodes.
+- Standard-cell PG pins tap directly onto lowest metal grid nodes by pin `type` (`power` / `ground`), not by pin name.
 - IR-drop measurements are generated for both output rise and output fall per instance, with edge mapping based on `standard_cells[].unateness`.
 - Optional external cell model include: `standard_cells[].spice_netlist_file`.
+- Netlist includes HSPICE probing for instance pin voltages via `.PROBE V(X*)`.
 
 ## Output Regeneration Hook
 

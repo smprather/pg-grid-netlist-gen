@@ -43,6 +43,8 @@ ploc:
     x: 5
     y: 5
   visualizer_render_diameter: 1
+visualizer:
+  initial_visible_objects: [Cells, M0, V0, M1]
 spice_netlist:
   standard_cell_output_load:
     resistance: 200

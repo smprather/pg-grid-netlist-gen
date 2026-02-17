@@ -20,13 +20,6 @@ click.rich_click.USE_RICH_MARKUP = True
 )
 @click.option("--netlist/--no-netlist", default=True, show_default=True, help="Generate SPICE netlist.")
 @click.option("--viz/--no-viz", default=True, show_default=True, help="Generate 2D HTML visualization.")
-@click.option(
-    "--viz-region",
-    type=str,
-    default=None,
-    show_default="None",
-    help="Render subregion in microns: X1,Y1,X2,Y2",
-)
 @click.option("--open-browser", is_flag=True, default=False, show_default="False", help="Auto-open HTML after generation.")
 @click.option("--save-image", type=str, default=None, show_default="None", help="Save a specific layer as a static PNG image.")
 @click.option("--report/--no-report", default=True, show_default=True, help="Generate and print an ASCII summary report.")
@@ -35,7 +28,6 @@ def generate(
     output_dir: Path,
     netlist: bool,
     viz: bool,
-    viz_region: str | None,
     open_browser: bool,
     save_image: str | None,
     report: bool,
@@ -71,12 +63,6 @@ def generate(
         from pg_grid_netlist_gen.visualize import render_grid
 
         viz_path = output_dir / "pg_grid_visualization.html" if viz else None
-        region = None
-        if viz_region:
-            parts = [float(x) for x in viz_region.split(",")]
-            if len(parts) != 4:
-                raise click.BadParameter("viz-region must be X1,Y1,X2,Y2")
-            region = (parts[0], parts[1], parts[2], parts[3])
 
         if viz:
             click.echo(f"Rendering visualization: {viz_path}")
@@ -84,7 +70,6 @@ def generate(
         render_grid(
             grid, config, 
             output_path=viz_path,
-            viz_region=region,
             open_browser=open_browser,
             save_image_layer=save_image,
             output_dir=output_dir,

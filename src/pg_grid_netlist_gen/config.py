@@ -62,6 +62,10 @@ class PlocConfig(BaseModel):
     visualizer_render_diameter: float = 1.0
 
 
+class VisualizerConfig(BaseModel):
+    initial_visible_objects: list[str] | None = None
+
+
 class SpiceNetlistConfig(BaseModel):
     standard_cell_output_load: dict[str, Any]
     transient_simulation: dict[str, Any]
@@ -108,6 +112,7 @@ class Config(BaseModel):
     units: UnitsConfig
     standard_cells: list[StandardCellConfig]
     ploc: PlocConfig
+    visualizer: VisualizerConfig | None = None
     spice_netlist: SpiceNetlistConfig
     standard_cell_placement: StandardCellPlacementConfig
     pg_nets: PgNetsConfig
@@ -307,8 +312,6 @@ class Config(BaseModel):
         if pi_segments < 1:
             raise ValueError("spice_netlist.standard_cell_output_load.number_pi_segments must be >= 1")
 
-        power_name = self.pg_nets.power.name
-        ground_name = self.pg_nets.ground.name
         for cell in self.standard_cells:
             for pin in cell.pins:
                 if pin.type == "signal" and pin.direction is None:
@@ -323,21 +326,19 @@ class Config(BaseModel):
                     f"standard_cells[{cell.name}].spice_port_order must list each declared pin exactly once"
                 )
 
-            if power_name not in pin_names or ground_name not in pin_names:
+            if not any(p.type == "power" for p in cell.pins):
                 raise ValueError(
-                    f"standard_cells[{cell.name}] must include PG pins named {power_name} and {ground_name}"
+                    f"standard_cells[{cell.name}] must include at least one pin with type=power"
+                )
+            if not any(p.type == "ground" for p in cell.pins):
+                raise ValueError(
+                    f"standard_cells[{cell.name}] must include at least one pin with type=ground"
                 )
 
-            power_pin = next((p for p in cell.pins if p.name == power_name), None)
-            ground_pin = next((p for p in cell.pins if p.name == ground_name), None)
-            if power_pin and power_pin.type != "power":
-                raise ValueError(
-                    f"standard_cells[{cell.name}] pin {power_name} must have type=power"
-                )
-            if ground_pin and ground_pin.type != "ground":
-                raise ValueError(
-                    f"standard_cells[{cell.name}] pin {ground_name} must have type=ground"
-                )
+        if self.visualizer and self.visualizer.initial_visible_objects is not None:
+            bad_entries = [v for v in self.visualizer.initial_visible_objects if not str(v).strip()]
+            if bad_entries:
+                raise ValueError("visualizer.initial_visible_objects entries must be non-empty strings")
 
         # Connectivity is checked for explicitly configured routing layers.
         # The implicit lowest ITF metal is not required in grid.layer_usage.
