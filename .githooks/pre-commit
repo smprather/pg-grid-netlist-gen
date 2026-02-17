@@ -19,7 +19,15 @@ fi
 echo "[pre-commit] Regenerating outputs from $config_file ..."
 ./pg_grid_netlist_gen "$config_file"
 
+if [[ ! -f "output/pg_grid_visualization.html" ]]; then
+  echo "[pre-commit] ERROR: output/pg_grid_visualization.html was not generated."
+  exit 1
+fi
+
+mkdir -p docs
+cp output/pg_grid_visualization.html docs/index.html
+
 echo "[pre-commit] Staging regenerated output files ..."
-git add output/pg_grid_netlist.sp output/pg_grid_summary.txt output/pg_grid_visualization.html
+git add output/pg_grid_netlist.sp output/pg_grid_summary.txt output/pg_grid_visualization.html docs/index.html
 
 echo "[pre-commit] Done."
