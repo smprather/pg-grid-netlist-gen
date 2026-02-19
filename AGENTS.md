@@ -97,6 +97,12 @@ The YAML file (currently `grid_specs.yaml`) defines technology, grid, placement,
 | `spice_netlist.ir_drop_measurement.averaging_window.start` | `number` | Yes | % | Start threshold as % of power voltage on the input-net transition. |
 | `spice_netlist.ir_drop_measurement.averaging_window.end` | `number` | Yes | % | End threshold as % of power voltage on the output-net transition. |
 
+### `visualizer` Schema
+
+| Key path | Type | Required | Units | Notes |
+|---|---|---|---|---|
+| `visualizer.initial_visible_objects` | `list[string]` | No | N/A | Legend entry names to show on load; all others start as `legendonly`. |
+
 ### `standard_cell_placement` Schema
 
 | Key path | Type | Required | Units | Notes |
@@ -151,7 +157,7 @@ The YAML file (currently `grid_specs.yaml`) defines technology, grid, placement,
 - Anywhere an instance power or ground pin lands on the lowest layer of metal, that segement of metal must be broken into two
   segments where the pin lands. This is not required if the cell pin lands exactly on the edge of a segment of metal. In this
   case, just tap the cell into the grid at the pre-existing node.
-- Add HSPICE .PROBE to probe the voltage of every pin of every instance. `.PROBE V(X\*)`
+- Add HSPICE .PROBE to probe the voltage of every pin of every instance. `.PROBE V(X*)`
 
 ### RC extraction formulas
 
@@ -257,7 +263,6 @@ Unless overridden by explicit CLI options, outputs MUST be written to `output/` 
      - Total capacitor count.
      - Total instance count.
      - Total chain count.
-     - Min/avg/max measured IR drop.
 
 ## Generation Order
 
