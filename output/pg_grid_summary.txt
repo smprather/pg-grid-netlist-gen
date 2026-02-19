@@ -7,17 +7,20 @@
 
 ** Component Counts **
   - Metal Stripes: 481
-  - Metal Segments (after breaking): 52271
+  - Metal Segments (after breaking): 52830
   - Vias: 35377
-  - Netlist Nodes: 70516
-  - Placed Standard Cells: 263
+  - Netlist Nodes: 71075
+  - Placed Chain Cells: 263
+  - Placed Dcap Cells: 286
+  - Dcap Cell Density: 44.62%
 
 ** Netlist Details **
-  - Resistors: 88125
-  - Capacitors: 31244
+  - Resistors: 88737
+  - Capacitors: 31350
   - Total Grid Capacitance (to substrate): 0.1965 pF
   - Power Net: VDD
   - Ground Net: VSS
+  - Total Chain Instance Count: 263
   - Total Chains: 53
 
 ** Details Per Layer **

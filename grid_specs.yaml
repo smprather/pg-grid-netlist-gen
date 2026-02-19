@@ -35,6 +35,18 @@ standard_cells:
     spice_port_order: A Y VDD VSS
     spice_netlist_file: BUFX12.spi
     unateness: positive
+  - name: DCAPX32
+    height: 0.315
+    width: 1.755
+    pins:
+      - name: VDD
+        type: power
+        location: top
+      - name: VSS
+        type: ground
+        location: bottom
+    spice_port_order: VDD VSS
+    spice_netlist_file: DCAPX32.spi
 # Pad location points
 ploc:
   pitch: 10
@@ -46,21 +58,21 @@ ploc:
 visualizer:
   initial_visible_objects: [Cells, M0, V0, M1]
 spice_netlist:
-  standard_cell_output_load:
-    resistance: 200
-    capacitance: 100
-    number_pi_segments: 2
-    last_buffer_in_chain:
-      resistance: 200
-      capacitance: 500
-  transient_simulation:
-    total_time: 2000
-    time_step: 5
-  chain_input_stimulus:
-    period: 500
-    # From 0% to 100%
-    transition_time: 20
-  instance_chains:
+  cell_chains:
+    chain_cell: BUFX12
+    cell_output_loads:
+      in_chain:
+        resistance: 200
+        capacitance: 100
+        number_pi_segments: 2
+      end_of_chain:
+        resistance: 200
+        capacitance: 500
+        number_pi_segments: 2
+    chain_input_stimulus:
+      period: 500
+      # From 0% to 100%
+      transition_time: 20
     max_instance_count_per_chain: 5
   ir_drop_measurement:
     averaging_window:
@@ -68,6 +80,9 @@ spice_netlist:
       start: 10
       # % of output transition
       end: 75
+  transient_simulation:
+    total_time: 2000
+    time_step: 5
 standard_cell_placement:
   # 7 tracks
   row_height: 0.315
@@ -81,6 +96,10 @@ standard_cell_placement:
   stagger_row_start:
     range: 5.0
     random: true
+  dcap_cells:
+    enabled: true
+    cell: DCAPX32
+    max_density_pct: 50
 pg_nets:
   power:
     name: "VDD"

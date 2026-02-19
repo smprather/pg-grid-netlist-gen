@@ -10,16 +10,18 @@ from pg_grid_netlist_gen.geometry import Grid
 
 def _count_chain_load_elements(grid: Grid, config: Config) -> tuple[int, int]:
     """Return (resistor_count, capacitor_count) for chain load elements."""
-    output_pin = next((p.name for p in config.standard_cells[0].pins if p.direction == "output"), None)
+    chain_cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+    output_pin = next((p.name for p in chain_cell_cfg.pins if p.direction == "output"), None)
     input_pin = next(
-        (p.name for p in config.standard_cells[0].pins if p.direction == "input" and p.type == "signal"),
+        (p.name for p in chain_cell_cfg.pins if p.direction == "input" and p.type == "signal"),
         None,
     )
     if not output_pin or not input_pin:
         return 0, 0
 
-    load_cfg = config.spice_netlist.standard_cell_output_load
-    n_seg = max(1, int(load_cfg.get("number_pi_segments", 1)))
+    loads_cfg = config.spice_netlist.cell_chains.cell_output_loads
+    in_chain_segs = max(1, loads_cfg.in_chain.number_pi_segments)
+    end_chain_segs = max(1, loads_cfg.end_of_chain.number_pi_segments)
 
     res_count = 0
     cap_count = 0
@@ -30,11 +32,11 @@ def _count_chain_load_elements(grid: Grid, config: Config) -> tuple[int, int]:
 
         is_last_in_chain = not any(output_net == c.pin_connections.get(input_pin) for c in grid.cells)
         if is_last_in_chain:
-            res_count += 1
-            cap_count += 1
+            res_count += end_chain_segs
+            cap_count += end_chain_segs + 1
         else:
-            res_count += n_seg
-            cap_count += n_seg + 1
+            res_count += in_chain_segs
+            cap_count += in_chain_segs + 1
     return res_count, cap_count
 
 
@@ -61,7 +63,19 @@ def generate_report(grid: Grid, config: Config) -> str:
     report_lines.append(f"  - Metal Segments (after breaking): {len(grid.segments)}")
     report_lines.append(f"  - Vias: {len(grid.vias)}")
     report_lines.append(f"  - Netlist Nodes: {len(grid.nodes)}")
-    report_lines.append(f"  - Placed Standard Cells: {len(grid.cells)}")
+    report_lines.append(f"  - Placed Chain Cells: {len(grid.cells)}")
+    report_lines.append(f"  - Placed Dcap Cells: {len(grid.dcap_cells)}")
+    dcap_cfg = config.standard_cell_placement.dcap_cells
+    if dcap_cfg is not None and dcap_cfg.enabled and grid.dcap_cells:
+        dcap_cell_cfg = config.get_cell_by_name(dcap_cfg.cell)
+        dcap_area = config.distance_to_nm(dcap_cell_cfg.width) * config.distance_to_nm(dcap_cell_cfg.height)
+        grid_size_x_nm = config.grid.size["sites"] * config.distance_to_nm(config.standard_cell_placement.site_width)
+        grid_size_y_nm = config.grid.size["rows"] * config.distance_to_nm(config.standard_cell_placement.row_height)
+        grid_area = grid_size_x_nm * grid_size_y_nm
+        density = (len(grid.dcap_cells) * dcap_area / grid_area) * 100.0 if grid_area > 0 else 0.0
+        report_lines.append(f"  - Dcap Cell Density: {density:.2f}%")
+    else:
+        report_lines.append(f"  - Dcap Cell Density: 0.00%")
     report_lines.append("")
 
     # Netlist Details
@@ -90,8 +104,9 @@ def generate_report(grid: Grid, config: Config) -> str:
     report_lines.append(f"  - Total Grid Capacitance (to substrate): {total_cap_pf:.4f} pF")
     report_lines.append(f"  - Power Net: {power_net}")
     report_lines.append(f"  - Ground Net: {ground_net}")
+    chain_cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
     input_pin = next(
-        (p.name for p in config.standard_cells[0].pins if p.type == "signal" and p.direction == "input"),
+        (p.name for p in chain_cell_cfg.pins if p.type == "signal" and p.direction == "input"),
         None,
     )
     if input_pin:
@@ -104,6 +119,7 @@ def generate_report(grid: Grid, config: Config) -> str:
         )
     else:
         chain_count = 0
+    report_lines.append(f"  - Total Chain Instance Count: {len(grid.cells)}")
     report_lines.append(f"  - Total Chains: {chain_count}")
     report_lines.append("")
 

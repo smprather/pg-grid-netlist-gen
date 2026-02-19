@@ -66,12 +66,39 @@ class VisualizerConfig(BaseModel):
     initial_visible_objects: list[str] | None = None
 
 
+class CellOutputLoadConfig(BaseModel):
+    resistance: float
+    capacitance: float
+    number_pi_segments: int
+
+
+class CellOutputLoadsConfig(BaseModel):
+    in_chain: CellOutputLoadConfig
+    end_of_chain: CellOutputLoadConfig
+
+
+class ChainInputStimulusConfig(BaseModel):
+    period: float
+    transition_time: float
+
+
+class CellChainsConfig(BaseModel):
+    chain_cell: str
+    cell_output_loads: CellOutputLoadsConfig
+    chain_input_stimulus: ChainInputStimulusConfig
+    max_instance_count_per_chain: int
+
+
 class SpiceNetlistConfig(BaseModel):
-    standard_cell_output_load: dict[str, Any]
+    cell_chains: CellChainsConfig
     transient_simulation: dict[str, Any]
-    chain_input_stimulus: dict[str, Any]
-    instance_chains: dict[str, Any]
     ir_drop_measurement: dict[str, Any]
+
+
+class DcapCellsConfig(BaseModel):
+    enabled: bool = False
+    cell: str = ""
+    max_density_pct: float = 0.0
 
 
 class StandardCellPlacementConfig(BaseModel):
@@ -79,6 +106,7 @@ class StandardCellPlacementConfig(BaseModel):
     site_width: float
     min_space: dict[str, float]
     stagger_row_start: dict[str, Any]
+    dcap_cells: DcapCellsConfig | None = None
 
 
 class PowerNetConfig(BaseModel):
@@ -217,6 +245,13 @@ class Config(BaseModel):
         grid_layer_names = self.grid.layer_usage.keys()
         return [name for name in beol_names if name in grid_layer_names]
 
+    def get_cell_by_name(self, name: str) -> StandardCellConfig:
+        """Return the StandardCellConfig with the given name, or raise ValueError."""
+        for cell in self.standard_cells:
+            if cell.name == name:
+                return cell
+        raise ValueError(f"No standard cell named '{name}' in standard_cells[]")
+
     def distance_to_nm(self, value: float) -> float:
         """Convert configured distance units to nanometers."""
         unit = self.units.distance.strip().lower()
@@ -270,14 +305,39 @@ class Config(BaseModel):
         if self.grid.size.get("rows", 0) < 1 or self.grid.size.get("sites", 0) < 1:
             raise ValueError("grid.size.rows and grid.size.sites must both be >= 1")
 
-        chains_cfg = self.spice_netlist.instance_chains
-        if "max_instance_count_per_chain" not in chains_cfg and "max_count" in chains_cfg:
-            # Backward-compatible alias support.
-            chains_cfg["max_instance_count_per_chain"] = chains_cfg["max_count"]
+        chains_cfg = self.spice_netlist.cell_chains
+        if chains_cfg.max_instance_count_per_chain < 1:
+            raise ValueError("spice_netlist.cell_chains.max_instance_count_per_chain must be >= 1")
 
-        max_per_chain = int(chains_cfg.get("max_instance_count_per_chain", 0))
-        if max_per_chain < 1:
-            raise ValueError("spice_netlist.instance_chains.max_instance_count_per_chain must be >= 1")
+        # Validate chain_cell references a valid standard cell with signal pins
+        chain_cell_name = chains_cfg.chain_cell
+        try:
+            chain_cell = self.get_cell_by_name(chain_cell_name)
+        except ValueError:
+            raise ValueError(
+                f"spice_netlist.cell_chains.chain_cell '{chain_cell_name}' "
+                f"not found in standard_cells[]"
+            )
+        if not any(p.type == "signal" for p in chain_cell.pins):
+            raise ValueError(
+                f"spice_netlist.cell_chains.chain_cell '{chain_cell_name}' "
+                f"must have signal pins for chain construction"
+            )
+
+        # Validate dcap_cells config
+        dcap_cfg = self.standard_cell_placement.dcap_cells
+        if dcap_cfg is not None and dcap_cfg.enabled:
+            try:
+                self.get_cell_by_name(dcap_cfg.cell)
+            except ValueError:
+                raise ValueError(
+                    f"standard_cell_placement.dcap_cells.cell '{dcap_cfg.cell}' "
+                    f"not found in standard_cells[]"
+                )
+            if not (0.0 <= dcap_cfg.max_density_pct <= 100.0):
+                raise ValueError(
+                    "standard_cell_placement.dcap_cells.max_density_pct must be between 0 and 100"
+                )
 
         win = self.spice_netlist.ir_drop_measurement.get("averaging_window", {})
         start = float(win.get("start", -1))
@@ -308,9 +368,10 @@ class Config(BaseModel):
         if self.beol_thickness <= 0:
             raise ValueError("beol_thickness must be > 0")
 
-        pi_segments = int(self.spice_netlist.standard_cell_output_load.get("number_pi_segments", 0))
-        if pi_segments < 1:
-            raise ValueError("spice_netlist.standard_cell_output_load.number_pi_segments must be >= 1")
+        if chains_cfg.cell_output_loads.in_chain.number_pi_segments < 1:
+            raise ValueError("spice_netlist.cell_chains.cell_output_loads.in_chain.number_pi_segments must be >= 1")
+        if chains_cfg.cell_output_loads.end_of_chain.number_pi_segments < 1:
+            raise ValueError("spice_netlist.cell_chains.cell_output_loads.end_of_chain.number_pi_segments must be >= 1")
 
         for cell in self.standard_cells:
             for pin in cell.pins:

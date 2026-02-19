@@ -3,6 +3,7 @@
 ## Requirement Keywords
 
 - MUST: Required behavior.
+- MUST NOT: Strictly forbidden behavior.
 - SHOULD: Strong recommendation; deviations must be intentional.
 - MAY: Optional behavior.
 
@@ -36,6 +37,8 @@ This project is a script that generates:
 - Unateness: Determines whether a logic cell is inverting from input to output.
   This is needed to know how to construct the measurement of the averaging windows
   for IR drop measurement. Positive means non-inverting. Negative means inverting.
+- Dcap cell: Decoupling capacitance cell. These cells have no signal input or output. They are used to reduce
+  IR drop locally.
 
 ## YAML Input File
 
@@ -84,16 +87,16 @@ The YAML file (currently `grid_specs.yaml`) defines technology, grid, placement,
 
 | Key path | Type | Required | Units | Notes |
 |---|---|---|---|---|
-| `spice_netlist.standard_cell_output_load.resistance` | `number` | Yes | resistance | Per-link loading R. |
-| `spice_netlist.standard_cell_output_load.capacitance` | `number` | Yes | capacitance | Per-link loading C. |
-| `spice_netlist.standard_cell_output_load.number_pi_segments` | `int` | Yes | N/A | Number of pi sections. |
-| `spice_netlist.standard_cell_output_load.last_buffer_in_chain.resistance` | `number` | Yes | resistance | Last-stage loading R. |
-| `spice_netlist.standard_cell_output_load.last_buffer_in_chain.capacitance` | `number` | Yes | capacitance | Last-stage loading C. |
+| `spice_netlist.cell_chains.chain_cell` | `string` | Yes | N/A | `standard_cells` name for chains. |
+| `spice_netlist.cell_chains.cell_output_loads.in_chain.resistance` | `number` | Yes | resistance | Per-link R. |
+| `spice_netlist.cell_chains.cell_output_loads.in_chain.capacitance` | `number` | Yes | capacitance | Per-link C. |
+| `spice_netlist.cell_chains.cell_output_loads.in_chain.number_pi_segments` | `int` | Yes | N/A | Pi sections. |
+| `spice_netlist.cell_chains.cell_output_loads.end_of_chain.*` | same | Yes | same | Last-stage load (also pi model). |
+| `spice_netlist.cell_chains.chain_input_stimulus.period` | `number` | Yes | time | PULSE period. |
+| `spice_netlist.cell_chains.chain_input_stimulus.transition_time` | `number` | Yes | time | Rise/fall time. |
+| `spice_netlist.cell_chains.max_instance_count_per_chain` | `int` | Yes | N/A | Max instances per chain. |
 | `spice_netlist.transient_simulation.total_time` | `number` | Yes | time | Transient stop time. |
 | `spice_netlist.transient_simulation.time_step` | `number` | Yes | time | Transient step. |
-| `spice_netlist.chain_input_stimulus.period` | `number` | Yes | time | PULSE period. |
-| `spice_netlist.chain_input_stimulus.transition_time` | `number` | Yes | time | PULSE rise/fall transition time. |
-| `spice_netlist.instance_chains.max_instance_count_per_chain` | `int` | Yes | N/A | Maximum instances allowed in one chain. |
 | `spice_netlist.ir_drop_measurement.averaging_window.start` | `number` | Yes | % | Start threshold as % of power voltage on the input-net transition. |
 | `spice_netlist.ir_drop_measurement.averaging_window.end` | `number` | Yes | % | End threshold as % of power voltage on the output-net transition. |
 
@@ -113,6 +116,9 @@ The YAML file (currently `grid_specs.yaml`) defines technology, grid, placement,
 | `standard_cell_placement.min_space.y` | `number` | Yes | distance | Minimum center-to-center spacing in Y. |
 | `standard_cell_placement.stagger_row_start.range` | `number` | Yes | distance | Row-start stagger amplitude. |
 | `standard_cell_placement.stagger_row_start.random` | `bool` | Yes | N/A | Randomize row-start offset if true. |
+| `standard_cell_placement.dcap_cells.enabled` | `bool` | No | N/A | Enable dcap insertion. Default: false. |
+| `standard_cell_placement.dcap_cells.cell` | `string` | No | N/A | `standard_cells` name for dcaps. |
+| `standard_cell_placement.dcap_cells.max_density_pct` | `number` | No | % | Max area density (0-100). |
 
 ### `pg_nets` Schema
 
@@ -189,13 +195,22 @@ For a staple layer between adjacent routed layers (example `M7-V6-M6-V5-M5`), ve
 - PG net names need not match standard-cell PG pin names.
   - Connectivity is established by matching a power-type PG net to a power-type pin on the cell.
     Same for ground type net to pin.
+- MUST NOT allow placement overlap with any other cells, dcap or chain.
+
+### Decoupling capacitance cell insertion
+
+- If enabled, insert decoupling caps (dcaps) until the maximum density is reached. Density is defined as the total area of the
+  dcap cells divided by the total area of the grid.
+- Draw them in the visualizer using a different legend group than the chain cell instances so that visibility can be independently
+  controlled.
 
 ### Chain generation
 
-- Start a chain from a random instance and connect output-to-input across instances.
+- Start a chain from a random instance and connect output-to-input across randomly chosend instances.
+- A cell can only be used in a chain once
 - Continue until `max_instance_count_per_chain` is reached per chain.
 - Continue creating chains until all instances are assigned.
-- Chain-loading values MUST come from `spice_netlist.standard_cell_output_load`, with last-stage overrides from `last_buffer_in_chain`.
+- Chain-loading values MUST come from `spice_netlist.cell_chains.cell_output_loads.in_chain`, with last-stage values from `end_of_chain`.
 - Input stimulus MUST use a SPICE `PULSE` source with configured period and transition time.
 
 ## Determinism and Randomness
@@ -261,8 +276,10 @@ Unless overridden by explicit CLI options, outputs MUST be written to `output/` 
      - Total PG capacitance.
      - Total resistor count.
      - Total capacitor count.
-     - Total instance count.
+     - Total chain instance count.
      - Total chain count.
+     - Total dcap cell count.
+     - Total dcap cell density.
 
 ## Generation Order
 

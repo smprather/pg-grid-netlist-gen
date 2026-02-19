@@ -31,6 +31,7 @@ LAYER_COLORS: dict[str, str] = {
 }
 VIA_COLOR = "rgba(150, 150, 150, 0.85)"
 CELL_COLOR = "rgba(220, 200, 60, 0.55)"
+DCAP_COLOR = "rgba(100, 200, 180, 0.55)"
 FLIGHT_COLOR = "rgba(120, 30, 30, 0.85)"
 OXIDE_COLOR = "rgba(236, 236, 210, 0.75)"
 PLOC_DEFAULT_COLOR = "rgba(30, 30, 30, 0.80)"
@@ -497,9 +498,9 @@ def render_grid(
                         col=1,
                     )
 
-    # Cells.
+    # Cells (chain cells).
     if grid.cells:
-        cell_cfg = config.standard_cells[0]
+        cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
         cell_w_nm = config.distance_to_nm(cell_cfg.width)
         cell_h_nm = config.distance_to_nm(cell_cfg.height)
 
@@ -534,9 +535,49 @@ def render_grid(
                 col=1,
             )
 
+    # Dcap Cells.
+    if grid.dcap_cells:
+        dcap_cfg = config.get_cell_by_name(
+            config.standard_cell_placement.dcap_cells.cell
+        )
+        dcap_w_nm = config.distance_to_nm(dcap_cfg.width)
+        dcap_h_nm = config.distance_to_nm(dcap_cfg.height)
+
+        dcap_shapes_x: list[float | None] = []
+        dcap_shapes_y: list[float | None] = []
+        for cell in grid.dcap_cells:
+            if region_nm and not _in_region_point(cell.x, cell.y, region_nm):
+                continue
+            x0, y0 = cell.x - dcap_w_nm / 2.0, cell.y - dcap_h_nm / 2.0
+            x1, y1 = cell.x + dcap_w_nm / 2.0, cell.y + dcap_h_nm / 2.0
+            dcap_shapes_x.extend(
+                [x0 / 1000.0, x1 / 1000.0, x1 / 1000.0, x0 / 1000.0, x0 / 1000.0, None]
+            )
+            dcap_shapes_y.extend(
+                [y0 / 1000.0, y0 / 1000.0, y1 / 1000.0, y1 / 1000.0, y0 / 1000.0, None]
+            )
+
+        if dcap_shapes_x:
+            fig.add_trace(
+                go.Scatter(
+                    x=dcap_shapes_x,
+                    y=dcap_shapes_y,
+                    mode="lines",
+                    fill="toself",
+                    fillcolor=DCAP_COLOR,
+                    line=dict(color="rgba(0,0,0,0.5)", width=0.6),
+                    name="Dcap Cells",
+                    legendgroup="dcap_cells",
+                    hoverinfo="name",
+                    visible=_legend_visibility("Dcap Cells", True),
+                ),
+                row=1,
+                col=1,
+            )
+
     # Flight lines.
     if grid.cells:
-        cell_cfg = config.standard_cells[0]
+        cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
         cell_w_nm = config.distance_to_nm(cell_cfg.width)
         cell_h_nm = config.distance_to_nm(cell_cfg.height)
         in_pin = next(

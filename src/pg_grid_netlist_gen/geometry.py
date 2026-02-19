@@ -104,5 +104,6 @@ class Grid:
     segments: list[Segment] = field(default_factory=list)
     vias: list[ViaConnection] = field(default_factory=list)
     cells: list[CellPlacement] = field(default_factory=list)
+    dcap_cells: list[CellPlacement] = field(default_factory=list)
     plocs: list[PlocPoint] = field(default_factory=list)
     nodes: dict[str, Node] = field(default_factory=dict)

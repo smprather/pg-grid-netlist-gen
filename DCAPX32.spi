@@ -1,0 +1,2 @@
+.subckt DCAPX32 VDD VSS
+.ends

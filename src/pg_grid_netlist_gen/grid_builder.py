@@ -533,7 +533,7 @@ def _chain_standard_cells(cells: list[CellPlacement], config: Config, rng: rando
 
     rng.shuffle(cells)
 
-    cell_cfg = config.standard_cells[0]
+    cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
     input_pins = [p.name for p in cell_cfg.pins if p.direction == "input" and p.type == "signal"]
     output_pins = [p.name for p in cell_cfg.pins if p.direction == "output" and p.type == "signal"]
     if not input_pins or not output_pins:
@@ -542,7 +542,7 @@ def _chain_standard_cells(cells: list[CellPlacement], config: Config, rng: rando
     input_pin = input_pins[0]
     output_pin = output_pins[0]
 
-    max_chain_len = config.spice_netlist.instance_chains["max_instance_count_per_chain"]
+    max_chain_len = config.spice_netlist.cell_chains.max_instance_count_per_chain
 
     chain_num = 0
     for i in range(0, len(cells), max_chain_len):
@@ -586,7 +586,7 @@ def _place_standard_cells(
     power_net_name = config.pg_nets.power.name
     ground_net_name = config.pg_nets.ground.name
 
-    cell_cfg = config.standard_cells[0]
+    cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
     cell_width_nm = config.distance_to_nm(cell_cfg.width)
     half_w = cell_width_nm / 2.0
 
@@ -731,6 +731,153 @@ def _generate_plocs(
     return plocs
 
 
+def _place_dcap_cells(
+    config: Config,
+    resolved: list[ResolvedLayer],
+    stripes: list[Stripe],
+    nodes: dict[str, Node],
+    grid_size_x: float,
+    grid_size_y: float,
+    chain_cells: list[CellPlacement],
+    rng: random.Random,
+) -> list[CellPlacement]:
+    """Place decoupling capacitance cells in available sites."""
+    dcap_cfg = config.standard_cell_placement.dcap_cells
+    if dcap_cfg is None or not dcap_cfg.enabled:
+        return []
+
+    dcap_cell_cfg = config.get_cell_by_name(dcap_cfg.cell)
+    dcap_w_nm = config.distance_to_nm(dcap_cell_cfg.width)
+    dcap_h_nm = config.distance_to_nm(dcap_cell_cfg.height)
+
+    # Compute max dcap count from density
+    grid_area = grid_size_x * grid_size_y
+    dcap_area = dcap_w_nm * dcap_h_nm
+    if dcap_area <= 0:
+        return []
+    max_count = int(math.floor(dcap_cfg.max_density_pct / 100.0 * grid_area / dcap_area))
+    if max_count < 1:
+        return []
+
+    # Find the placement layer (lowest grid layer)
+    available_grid_layers = [rl for rl in resolved if rl.layer_type == "grid"]
+    if not available_grid_layers:
+        return []
+    placement_layer = available_grid_layers[-1].name
+    layer_rl = _get_resolved(resolved, placement_layer)
+    layer_stripes = sorted(
+        [s for s in stripes if s.layer == placement_layer], key=lambda s: s.position
+    )
+    if len(layer_stripes) < 2:
+        return []
+
+    power_net_name = config.pg_nets.power.name
+    ground_net_name = config.pg_nets.ground.name
+    site_w_nm = config.distance_to_nm(config.standard_cell_placement.site_width)
+
+    chain_cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+    chain_w_nm = config.distance_to_nm(chain_cell_cfg.width)
+
+    # Build occupied intervals per row from chain cells
+    occupied_by_row: dict[int, list[tuple[float, float]]] = {}
+    for cell in chain_cells:
+        half_w = chain_w_nm / 2.0
+        left = cell.x - half_w
+        right = cell.x + half_w
+        occupied_by_row.setdefault(cell.row, []).append((left, right))
+    for intervals in occupied_by_row.values():
+        intervals.sort()
+
+    def _overlaps(left: float, right: float, intervals: list[tuple[float, float]]) -> bool:
+        for il, ir in intervals:
+            if left < ir and right > il:
+                return True
+        return False
+
+    # Collect all legal dcap sites
+    legal_sites: list[tuple[int, float, float, bool, Stripe, Stripe]] = []
+    logical_row = 0
+    for row_idx in range(len(layer_stripes) - 1):
+        stripe_a = layer_stripes[row_idx]
+        stripe_b = layer_stripes[row_idx + 1]
+        if {stripe_a.net, stripe_b.net} != {power_net_name, ground_net_name}:
+            continue
+
+        flipped = logical_row % 2 == 1
+        if flipped:
+            vdd_stripe = stripe_a if stripe_a.net == power_net_name else stripe_b
+            vss_stripe = stripe_b if vdd_stripe is stripe_a else stripe_a
+        else:
+            vdd_stripe = stripe_b if stripe_b.net == power_net_name else stripe_a
+            vss_stripe = stripe_a if vdd_stripe is stripe_b else stripe_b
+
+        row_intervals = occupied_by_row.get(logical_row, [])
+
+        left_edge = 0.0
+        while left_edge + dcap_w_nm <= grid_size_x + 1e-6:
+            right_edge = left_edge + dcap_w_nm
+            if not _overlaps(left_edge, right_edge, row_intervals):
+                legal_sites.append(
+                    (logical_row, left_edge, right_edge, flipped, vdd_stripe, vss_stripe)
+                )
+            left_edge = math.ceil((left_edge + site_w_nm) / site_w_nm) * site_w_nm
+
+        logical_row += 1
+
+    if not legal_sites:
+        return []
+
+    # Greedy random selection: shuffle, then pick non-overlapping sites.
+    # Track occupied intervals per row to prevent dcap-to-dcap overlap.
+    rng.shuffle(legal_sites)
+    placed_by_row: dict[int, list[tuple[float, float]]] = {}
+    chosen: list[tuple[int, float, float, bool, Stripe, Stripe]] = []
+    for site in legal_sites:
+        if len(chosen) >= max_count:
+            break
+        row, left, right = site[0], site[1], site[2]
+        row_placed = placed_by_row.get(row, [])
+        if _overlaps(left, right, row_placed):
+            continue
+        chosen.append(site)
+        placed_by_row.setdefault(row, []).append((left, right))
+
+    dcap_cells: list[CellPlacement] = []
+    for idx, (row, left, right, flipped, vdd_stripe, vss_stripe) in enumerate(chosen):
+        cell_x_nm = (left + right) / 2.0
+        cell_y_nm = (vdd_stripe.position + vss_stripe.position) / 2.0
+        instance_name = f"XDCAP_{idx}"
+
+        pin_connections: dict[str, str] = {}
+        for pin in dcap_cell_cfg.pins:
+            if pin.type == "power":
+                node = _get_or_create_node(
+                    nodes, placement_layer, cell_x_nm, vdd_stripe.position,
+                    layer_rl.z_bottom_nm, power_net_name,
+                )
+                pin_connections[pin.name] = node.name
+            elif pin.type == "ground":
+                node = _get_or_create_node(
+                    nodes, placement_layer, cell_x_nm, vss_stripe.position,
+                    layer_rl.z_bottom_nm, ground_net_name,
+                )
+                pin_connections[pin.name] = node.name
+
+        dcap_cells.append(
+            CellPlacement(
+                instance_name=instance_name,
+                cell_name=dcap_cell_cfg.name,
+                x=cell_x_nm,
+                y=cell_y_nm,
+                row=row,
+                flipped=flipped,
+                pin_connections=pin_connections,
+            )
+        )
+
+    return dcap_cells
+
+
 def build_grid(config: Config) -> Grid:
     """Build the complete power grid from configuration."""
     rng = config.make_rng()
@@ -747,6 +894,9 @@ def build_grid(config: Config) -> Grid:
     staple_segments, staple_nodes = _create_staple_segments(config, resolved, staples, nodes)
     vias = _place_vias(config, resolved, stripes, staples, staple_nodes, nodes)
     cells = _place_standard_cells(config, resolved, stripes, nodes, grid_size_x, rng)
+    dcap_cells = _place_dcap_cells(
+        config, resolved, stripes, nodes, grid_size_x, grid_size_y, cells, rng,
+    )
     plocs = _generate_plocs(config, resolved, stripes, nodes, grid_size_x, grid_size_y)
     segments = _segment_stripes(resolved, config, stripes, nodes)
     segments.extend(staple_segments)
@@ -768,6 +918,7 @@ def build_grid(config: Config) -> Grid:
         segments=segments,
         vias=vias,
         cells=cells,
+        dcap_cells=dcap_cells,
         plocs=plocs,
         nodes=nodes,
     )
