@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
-config_file="grid_specs.yaml"
+config_file="config.yaml"
 
 if [[ ! -x "./pg_grid_netlist_gen" ]]; then
   echo "[pre-commit] ERROR: ./pg_grid_netlist_gen is missing or not executable."

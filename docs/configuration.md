@@ -1,6 +1,6 @@
 # Configuration Reference
 
-The generator is configured by `grid_specs.yaml`.
+The generator is configured by `config.yaml`.
 
 ## Top-Level Keys
 
@@ -34,5 +34,5 @@ The generator is configured by `grid_specs.yaml`.
 ## Run
 
 ```bash
-./pg_grid_netlist_gen grid_specs.yaml
+./pg_grid_netlist_gen config.yaml
 ```

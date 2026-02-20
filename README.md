@@ -25,21 +25,21 @@ uv pip install -e .
 ## Run
 
 ```bash
-./pg_grid_netlist_gen grid_specs.yaml
+./pg_grid_netlist_gen config.yaml
 ```
 
 Common options:
 
 ```bash
-./pg_grid_netlist_gen grid_specs.yaml --open-browser
-./pg_grid_netlist_gen grid_specs.yaml --output-dir output
+./pg_grid_netlist_gen config.yaml --open-browser
+./pg_grid_netlist_gen config.yaml --output-dir output
 ```
 
 ## Configuration
 
 Primary inputs:
 
-- `grid_specs.yaml`
+- `config.yaml`
 - ITF file referenced by `itf.file` (for example `freepdk3_rctyp.itf`)
 
 Highlights:
@@ -58,7 +58,7 @@ This repo includes a versioned pre-commit hook at:
 
 - `.githooks/pre-commit`
 
-It regenerates outputs from `grid_specs.yaml` and stages `output/` artifacts before each commit.
+It regenerates outputs from `config.yaml` and stages `output/` artifacts before each commit.
 
 Enable it once per clone:
 

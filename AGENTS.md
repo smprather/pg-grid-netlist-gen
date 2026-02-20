@@ -42,7 +42,7 @@ This project is a script that generates:
 
 ## YAML Input File
 
-The YAML file (currently `grid_specs.yaml`) defines technology, grid, placement, PLOC, and SPICE settings.
+The YAML file (currently `config.yaml`) defines technology, grid, placement, PLOC, and SPICE settings.
 
 ### Global Schema
 
