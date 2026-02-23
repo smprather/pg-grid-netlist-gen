@@ -151,7 +151,7 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
 
 #### Layer-usage enum and implicit defaults
 
-- The layer width and pitch are in terms of WMIN, and SMIN.
+- The layer width and pitch are in terms of WMIN and SMIN.
   - For example, if width=1.0, then the actual width is 1.0 * WMIN
   - For example, if pitch=1.0, then the actual pitch is 1.0 * (WMIN+SMIN)
 - `grid.layer_usage.<LAYER>.type` MUST be one of:
@@ -171,18 +171,18 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
 - Via shape MUST be square and satisfy ITF `AREA`.
 - PLOC generation MUST start with the power net and alternate horizontally between power and ground.
 - If a PLOC does not land on a top-layer stripe of the intended PG net, it MUST snap to the nearest valid stripe centerline.
-- Anywhere an instance power or ground pin lands on the lowest layer of metal, that segement of metal must be broken into two
+- Anywhere an instance power or ground pin lands on the lowest layer of metal, that segment of metal must be broken into two
   segments where the pin lands. This is not required if the cell pin lands exactly on the edge of a segment of metal. In this
   case, just tap the cell into the grid at the pre-existing node.
 - Add HSPICE .PROBE to probe the voltage of every pin of every instance. `.PROBE V(X*)`
 - Netlist node names should begin with the net name of the segment the R or C is associated with.
 - New netlist nodes MUST be created at:
   - The top and bottom of VIAs.
-  - Where cell or dcap cell PG pins touches the lowest layer of metal.
+  - Where cell or dcap cell PG pins touch the lowest layer of metal.
   - Where PLOC points touch the layer of metal they connect to.
   - Where any metal stripe touches the edge of the defined grid area.
 - For the capacitance of each metal segment, connect half of the cap at each end of the segment (pi model).
-- Connect all capacitors the ground net. Do not attempt to connect to the nearest ground net segment. For example,
+- Connect all capacitors to the ground net. Do not attempt to connect to the nearest ground net segment. For example,
   if VSS is the ground net name, then all caps should connect to VSS.
 
 ### RC extraction formulas
@@ -219,7 +219,7 @@ For a staple layer between adjacent routed layers (example `M7-V6-M6-V5-M5`), ve
     Same for ground type net to pin.
 - MUST NOT allow placement overlap with any other cells, dcap or chain.
 - For each VIA layer, calculate the min-space as the length of a side of a via, times grid.via_min_space_factor.
-- For the visualizer, place the maximum number of minimum-spaced VIAs between adjacment-layer metal stripes of
+- For the visualizer, place the maximum number of minimum-spaced VIAs between adjacent-layer metal stripes of
   the same net. However, for the purposes of node creation and resistance extraction, treat the group of vias
   as a single via with R=RPV/number_of_vias_used_in_visualizer. In other words, for extraction, model the group
   of vias as a single r-scaled via located in the middle of the metal stripe.
@@ -232,8 +232,8 @@ For a staple layer between adjacent routed layers (example `M7-V6-M6-V5-M5`), ve
 
 ### Chain generation
 
-- Start a chain from a random instance and connect output-to-input across randomly chosend instances.
-- A cell can only be used in a chain once
+- Start a chain from a random instance and connect output-to-input across randomly chosen instances.
+- A cell can only be used in a chain once.
 - Continue until `max_instance_count_per_chain` is reached per chain.
 - Continue creating chains until all instances are assigned.
 - Chain-loading values MUST come from `spice_netlist.cell_chains.cell_output_loads.in_chain`, with last-stage values from `end_of_chain`.
@@ -293,13 +293,13 @@ The generator MUST fail fast with a clear error message when validation fails.
 
 - A cross-section visualization of the ITF stack MUST be placed below the 2D render.
 
-  - Don't label the shapes in the plot. Just use a legend to label the layers.
+  - Use hover-data to label the layers.
   - Any layers with the same thickness should share the same color.
-  - Render FEOL as a layer. The botomm of the FEOL layer should represent the y=0 point.
-  - Render the substrate as a layer equal to 3x the thickness to the FEOL layer.
+  - Render FEOL as a layer. The bottom of the FEOL layer is the y=0 point.
+  - Render the substrate as a layer 3x the thickness of the FEOL layer.
   - Do not include the "\<via_layer>\_diel" layers. Just render the VIAs.
   - For substrate only, add a label to the layer.
-  - Don't add the legend. The layer hover-data is good enough.
+  - Don't use a legend.
 
 - Use include_plotlyjs=True to support offline usage, but only in the first div (see below).
 
@@ -333,8 +333,8 @@ Unless overridden by explicit CLI options, outputs MUST be written to `output/` 
      - Total PG capacitance.
      - Total resistor count.
      - Total capacitor count.
-     - Total capacitance to substrate
-     - Total capacitance to same-layer
+     - Total capacitance to substrate.
+     - Total capacitance to same-layer.
      - Total chain instance count.
      - Total chain count.
      - Total dcap cell count.
