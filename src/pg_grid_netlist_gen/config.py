@@ -130,7 +130,7 @@ class PgNetsConfig(BaseModel):
 
 
 class LayerUsageConfig(BaseModel):
-    type: Literal["g", "s"]
+    type: Literal["grid", "staple"]
     width: float
     pitch: float
 

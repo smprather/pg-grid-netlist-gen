@@ -145,9 +145,9 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
 | `via_min_space_factor` | `number` | N | N/A | Via min-space = via_side * factor. Default: 1.5. |
 | `size.rows` | `int` | Y | rows | Number of placement rows. |
 | `size.sites` | `int` | Y | sites | Number of sites per row. |
-| `layer_usage.<LAYER>.type` | `string` | Y | N/A | `g` (grid stripe) or `s` (staple). |
+| `layer_usage.<LAYER>.type` | `string` | Y | N/A | `grid` or `staple`. |
 | `layer_usage.<LAYER>.width` | `number` | Y | distance | Metal width for layer. |
-| `layer_usage.<LAYER>.pitch` | `number` | Y | distance | Stripe pitch for `g`. |
+| `layer_usage.<LAYER>.pitch` | `number` | Y | distance | Stripe pitch for `grid`. |
 
 #### Layer-usage enum and implicit defaults
 
@@ -155,11 +155,11 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
   - For example, if width=1.0, then the actual width is 1.0 * WMIN
   - For example, if pitch=1.0, then the actual pitch is 1.0 * (WMIN+SMIN)
 - `grid.layer_usage.<LAYER>.type` MUST be one of:
-  - `g`: full-span stripe layer.
-  - `s`: staple layer.
+  - `grid`: A full-span metal stripe layer.
+  - `staple`: A staple layer. Just enough metal to get to the above and below VIA layer.
 - The lowest metal layer in ITF is implicit and SHOULD be omitted from `grid.layer_usage`.
 - For the implicit lowest layer:
-  - `type` MUST be treated as `g`.
+  - `type` MUST be treated as `grid`.
   - `width` MUST be the ITF `WMIN` of that lowest conductor.
   - `pitch` MUST equal `standard_cell_placement.row_height`.
 - All explicitly configured layer names MUST exist as ITF `CONDUCTOR` names.

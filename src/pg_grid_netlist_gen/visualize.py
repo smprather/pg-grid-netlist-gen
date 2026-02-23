@@ -100,7 +100,7 @@ def _is_grid_layer(config: Config, layer_name: str) -> bool:
     """Check if a layer is a grid-type layer (not staple)."""
     usage = config.grid.layer_usage.get(layer_name)
     if usage is not None:
-        return usage.type == "g"
+        return usage.type == "grid"
     # The implicit lowest layer is always grid-type.
     return layer_name == config.lowest_metal_layer_name
 

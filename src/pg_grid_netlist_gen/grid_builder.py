@@ -87,7 +87,7 @@ def _resolve_layers(config: Config) -> list[ResolvedLayer]:
             width_nm = beol_layer.min_width or 0.0
             actual_pitch_nm = config.distance_to_nm(config.standard_cell_placement.row_height)
         else:
-            layer_type = "grid" if usage.type == "g" else "staple"
+            layer_type = usage.type
             # Configured layer_usage width/pitch are multipliers:
             # width = factor * WMIN, pitch = factor * (WMIN + SMIN).
             base_width_nm = beol_layer.min_width or 0.0

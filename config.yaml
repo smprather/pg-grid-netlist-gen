@@ -112,28 +112,29 @@ pg_nets:
   ground:
     name: "VSS"
 grid:
-  # If the ITF file does not specify min spacing for VIAs. Set the min-spice to
+  # If the ITF file does not specify min spacing for VIAs. Set the min-space to
   # be the length of a via edge * via_min_space_factor
   via_min_space_factor: 1.5
   size:
     rows: 50
     sites: 500
   # The width and pitch are in terms of WMIN, and SMIN.
-  # For example, if width=1.0, then the actual width is 1.0 * WMIN
-  # For example, if pitch=1.0, then the actual pitch is 1.0 * WMIN+SMIN
+  # For example, if width=1.0, then the actual width in distance units is 1.0 * WMIN.
+  # For example, if pitch=1.0, then the actual pitch in distance units is 1.0 * WMIN+SMIN.
+  # The lowest layer is implicitly: horizontal, type=grid, width=1.0, pitch=standard_cells.height
+  # Layers alternate between horizontal and vertical moving up from the lowest layer.
   layer_usage:
-    RDL: {type: g, width: 1.0, pitch: 1.0}
-    M13: {type: g, width: 1.0, pitch: 1.0}
-    M12: {type: s, width: 1.0, pitch: 1.0}
-    M11: {type: s, width: 1.0, pitch: 1.0}
-    M10: {type: s, width: 1.0, pitch: 1.0}
-    M9: {type: s, width: 1.0, pitch: 1.0}
-    M8: {type: g, width: 1.0, pitch: 5.0}
-    M7: {type: g, width: 1.0, pitch: 5.0}
-    M6: {type: s, width: 1.0, pitch: 1.0}
-    M5: {type: s, width: 1.0, pitch: 1.0}
-    M4: {type: s, width: 1.0, pitch: 1.0}
-    M3: {type: s, width: 1.0, pitch: 1.0}
-    M2: {type: g, width: 1.0, pitch: 5.0}
-    M1: {type: g, width: 1.0, pitch: 5.0}
-    # M0: {type: g, width: 1.0, pitch: 7.0}
+    RDL: {type: grid, width: 1.0, pitch: 1.0}
+    M13: {type: grid, width: 1.0, pitch: 1.0}
+    M12: {type: staple, width: 1.0, pitch: 1.0}
+    M11: {type: staple, width: 1.0, pitch: 1.0}
+    M10: {type: staple, width: 1.0, pitch: 1.0}
+    M9: {type: staple, width: 1.0, pitch: 1.0}
+    M8: {type: grid, width: 1.0, pitch: 5.0}
+    M7: {type: grid, width: 1.0, pitch: 5.0}
+    M6: {type: staple, width: 1.0, pitch: 1.0}
+    M5: {type: staple, width: 1.0, pitch: 1.0}
+    M4: {type: staple, width: 1.0, pitch: 1.0}
+    M3: {type: staple, width: 1.0, pitch: 1.0}
+    M2: {type: grid, width: 1.0, pitch: 5.0}
+    M1: {type: grid, width: 1.0, pitch: 5.0}
