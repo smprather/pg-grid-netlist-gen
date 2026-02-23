@@ -100,7 +100,7 @@ def write_netlist(grid: Grid, config: Config, output_path: str | Path) -> None:
         _write_subckt_stubs(f, config)
         _write_resistors(f, grid)
         _write_via_resistors(f, grid)
-        _write_capacitors(f, grid)
+        _write_capacitors(f, grid, config)
         _write_cells(f, grid, config)
         _write_chain_loads(f, grid, config)
         _write_analysis(f, config)
@@ -188,18 +188,19 @@ def _write_via_resistors(f: TextIO, grid: Grid) -> None:
     f.write("\n")
 
 
-def _write_capacitors(f: TextIO, grid: Grid) -> None:
+def _write_capacitors(f: TextIO, grid: Grid, config: Config) -> None:
     f.write("* === Node Capacitances ===\n")
+    ground_net = config.pg_nets.ground.name
     node_cap: dict[str, float] = defaultdict(float)
     for seg in grid.segments:
-        c_total = seg.cap_plate + seg.cap_fringe
+        c_total = seg.cap_plate + seg.cap_fringe + seg.cap_coupling
         half_c = c_total / 2.0
         node_cap[seg.node_a.name] += half_c
         node_cap[seg.node_b.name] += half_c
 
     for node_name, cap in sorted(node_cap.items()):
         if cap > 0:
-            f.write(f"C_{node_name} {node_name} 0 {_format_value(cap)}\n")
+            f.write(f"C_{node_name} {node_name} {ground_net} {_format_value(cap)}\n")
     f.write("\n")
 
 

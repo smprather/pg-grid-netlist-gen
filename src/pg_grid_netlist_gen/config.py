@@ -89,7 +89,13 @@ class CellChainsConfig(BaseModel):
     max_instance_count_per_chain: int
 
 
+class ScalingConfig(BaseModel):
+    resistance: float = 1.0
+    capacitance: float = 1.0
+
+
 class SpiceNetlistConfig(BaseModel):
+    scaling: ScalingConfig = ScalingConfig()
     cell_chains: CellChainsConfig
     transient_simulation: dict[str, Any]
     ir_drop_measurement: dict[str, Any]
@@ -130,6 +136,7 @@ class LayerUsageConfig(BaseModel):
 
 
 class GridConfig(BaseModel):
+    via_min_space_factor: float = 1.5
     size: dict[str, int]
     layer_usage: dict[str, LayerUsageConfig]
 
@@ -145,7 +152,7 @@ class Config(BaseModel):
     standard_cell_placement: StandardCellPlacementConfig
     pg_nets: PgNetsConfig
     grid: GridConfig
-    beol_thickness: float
+    feol_thickness: float
 
     _beol_stack: BeolStack | None = PrivateAttr(default=None)
     _itf_stack: ItfStack | None = PrivateAttr(default=None)
@@ -305,6 +312,14 @@ class Config(BaseModel):
         if self.grid.size.get("rows", 0) < 1 or self.grid.size.get("sites", 0) < 1:
             raise ValueError("grid.size.rows and grid.size.sites must both be >= 1")
 
+        if self.spice_netlist.scaling.resistance <= 0:
+            raise ValueError("spice_netlist.scaling.resistance must be > 0")
+        if self.spice_netlist.scaling.capacitance <= 0:
+            raise ValueError("spice_netlist.scaling.capacitance must be > 0")
+
+        if self.grid.via_min_space_factor <= 0:
+            raise ValueError("grid.via_min_space_factor must be > 0")
+
         chains_cfg = self.spice_netlist.cell_chains
         if chains_cfg.max_instance_count_per_chain < 1:
             raise ValueError("spice_netlist.cell_chains.max_instance_count_per_chain must be >= 1")
@@ -365,8 +380,8 @@ class Config(BaseModel):
         if self.ploc.offset_from_origin.get("x", 0) < 0 or self.ploc.offset_from_origin.get("y", 0) < 0:
             raise ValueError("ploc.offset_from_origin.x and y must be >= 0")
 
-        if self.beol_thickness <= 0:
-            raise ValueError("beol_thickness must be > 0")
+        if self.feol_thickness <= 0:
+            raise ValueError("feol_thickness must be > 0")
 
         if chains_cfg.cell_output_loads.in_chain.number_pi_segments < 1:
             raise ValueError("spice_netlist.cell_chains.cell_output_loads.in_chain.number_pi_segments must be >= 1")

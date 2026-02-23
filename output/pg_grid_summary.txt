@@ -16,8 +16,10 @@
 
 ** Netlist Details **
   - Resistors: 88737
-  - Capacitors: 31350
-  - Total Grid Capacitance (to substrate): 0.1965 pF
+  - Capacitors: 18090
+  - Total PG Capacitance: 0.1269 pF
+    - To substrate (plate + fringe): 0.0827 pF
+    - To same-layer ground (coupling): 0.0441 pF
   - Power Net: VDD
   - Ground Net: VSS
   - Total Chain Instance Count: 263

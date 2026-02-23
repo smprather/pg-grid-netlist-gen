@@ -17,7 +17,7 @@ from pg_grid_netlist_gen.geometry import (
     Stripe,
     ViaConnection,
 )
-from pg_grid_netlist_gen.physics import total_segment_capacitance
+from pg_grid_netlist_gen.physics import coupling_capacitance, total_segment_capacitance
 
 
 @dataclass
@@ -114,8 +114,8 @@ def _resolve_layers(config: Config) -> list[ResolvedLayer]:
     return resolved
 
 
-def _node_name(layer: str, x: float, y: float) -> str:
-    return f"{layer}_X_{int(round(x))}_Y_{int(round(y))}"
+def _node_name(net: str, layer: str, x: float, y: float) -> str:
+    return f"{net}_{layer}_X_{int(round(x))}_Y_{int(round(y))}"
 
 
 def _staple_key(layer: str, x: float, y: float, net: str) -> tuple[str, int, int, str]:
@@ -130,7 +130,7 @@ def _get_or_create_node(
     z: float,
     net: str,
 ) -> Node:
-    name = _node_name(layer, x, y)
+    name = _node_name(net, layer, x, y)
     if name not in nodes:
         nodes[name] = Node(name=name, x=x, y=y, z=z, layer=layer, net=net)
     return nodes[name]
@@ -288,8 +288,8 @@ def _create_staple_segments(
         beol = config.get_beol_layer(staple.layer)
 
         key = _staple_key(staple.layer, staple.x, staple.y, staple.net)
-        up_name = f"{staple.layer}_X_{int(round(staple.x))}_Y_{int(round(staple.y))}_UP"
-        dn_name = f"{staple.layer}_X_{int(round(staple.x))}_Y_{int(round(staple.y))}_DN"
+        up_name = f"{staple.net}_{staple.layer}_X_{int(round(staple.x))}_Y_{int(round(staple.y))}_UP"
+        dn_name = f"{staple.net}_{staple.layer}_X_{int(round(staple.x))}_Y_{int(round(staple.y))}_DN"
         up_node = _create_named_node(nodes, up_name, staple.layer, staple.x, staple.y, rl.z_top_nm, staple.net)
         dn_node = _create_named_node(nodes, dn_name, staple.layer, staple.x, staple.y, rl.z_bottom_nm, staple.net)
         staple_nodes[key] = (up_node, dn_node)
@@ -311,6 +311,27 @@ def _create_staple_segments(
         )
 
     return segments, staple_nodes
+
+
+def _compute_via_pack_count(
+    top_stripe: Stripe,
+    bot_stripe: Stripe,
+    via_side: float,
+    min_space_factor: float,
+) -> int:
+    """Compute 2D via array count within the overlap rectangle at a grid-to-grid crossing.
+
+    At a crossing, one stripe is horizontal and one is vertical.
+    The overlap rectangle is top_stripe.width × bot_stripe.width.
+    """
+    rect_w = top_stripe.width
+    rect_h = bot_stripe.width
+    via_pitch = via_side * min_space_factor
+    if via_pitch <= 0:
+        return 1
+    n_x = max(1, int(rect_w / via_pitch))
+    n_y = max(1, int(rect_h / via_pitch))
+    return n_x * n_y
 
 
 def _add_via_nodes(
@@ -378,9 +399,23 @@ def _place_vias(
                     else:
                         x, y = bs.position, ts.position
 
+                    via_side = math.sqrt(itf_via.area_nm2) if itf_via.area_nm2 > 0 else (via_beol.min_width or 0.0)
+                    via_count = _compute_via_pack_count(ts, bs, via_side, config.grid.via_min_space_factor)
+
                     node_top = _get_or_create_node(nodes, top_rl.name, x, y, top_rl.z_bottom_nm, ts.net)
                     node_bot = _get_or_create_node(nodes, bot_rl.name, x, y, bot_rl.z_bottom_nm, ts.net)
-                    _add_via_nodes(vias, via_beol, itf_via, node_top, node_bot, ts.net)
+                    vias.append(
+                        ViaConnection(
+                            node_top=node_top,
+                            node_bot=node_bot,
+                            via_layer=via_beol.name,
+                            width=via_beol.min_width,
+                            height=via_beol.thickness,
+                            net=ts.net,
+                            resistance=itf_via.resistance_per_via / via_count,
+                            via_count=via_count,
+                        )
+                    )
             continue
 
         # Grid-to-staple (top grid, bottom staple).
@@ -453,6 +488,25 @@ def _place_vias(
     return vias
 
 
+def _find_nearest_ground_spacing(
+    stripe: Stripe,
+    stripes: list[Stripe],
+    ground_net: str,
+) -> float:
+    """Find edge-to-edge spacing to the nearest ground stripe on the same layer."""
+    best_spacing = float("inf")
+    for other in stripes:
+        if other.layer != stripe.layer or other.net != ground_net:
+            continue
+        if other.direction != stripe.direction:
+            continue
+        center_dist = abs(stripe.position - other.position)
+        edge_spacing = center_dist - (stripe.width / 2.0) - (other.width / 2.0)
+        if edge_spacing > 0 and edge_spacing < best_spacing:
+            best_spacing = edge_spacing
+    return best_spacing
+
+
 def _segment_stripes(
     resolved: list[ResolvedLayer],
     config: Config,
@@ -477,6 +531,26 @@ def _segment_stripes(
                 stripe_points[(stripe.layer, stripe.position, stripe.net)].append(node.x)
 
     oxide_mat = config.get_material("oxide")
+    eps_r = oxide_mat.get("relative_permittivity", 2.5)
+    power_net = config.pg_nets.power.name
+    ground_net = config.pg_nets.ground.name
+
+    # Compute feol-based substrate distance reference.
+    # feol_thickness is the distance from M0 bottom to substrate.
+    feol_thickness_nm = config.distance_to_nm(config.feol_thickness)
+    lowest_metal_rl = next(
+        (rl for rl in reversed(resolved) if rl.layer_type == "grid"), None
+    )
+    m0_z_bottom = lowest_metal_rl.z_bottom_nm if lowest_metal_rl else 0.0
+
+    # Pre-compute nearest ground spacing per power stripe for coupling cap.
+    stripe_ground_spacing: dict[tuple[str, float, str], float] = {}
+    for stripe in stripes:
+        if stripe.net == power_net:
+            key = (stripe.layer, stripe.position, stripe.net)
+            stripe_ground_spacing[key] = _find_nearest_ground_spacing(
+                stripe, stripes, ground_net
+            )
 
     for stripe in stripes:
         rl = _get_resolved(resolved, stripe.layer)
@@ -502,13 +576,21 @@ def _segment_stripes(
                 r = rl.resistance_per_square * (length / rl.width_nm)
             else:
                 r = 0.0
-            cp, cf, _ = total_segment_capacitance(
-                rl.width_nm,
-                length,
-                rl.thickness_nm,
-                rl.z_bottom_nm,
-                oxide_mat.get("relative_permittivity", 2.5),
-            )
+
+            # Capacitance only on power-type PG net segments.
+            cp = 0.0
+            cf = 0.0
+            cc = 0.0
+            if stripe.net == power_net:
+                dist_to_sub = feol_thickness_nm + (rl.z_bottom_nm - m0_z_bottom)
+                cp, cf, _ = total_segment_capacitance(
+                    rl.width_nm, length, rl.thickness_nm, dist_to_sub, eps_r,
+                )
+                # Plate-to-plate coupling cap to nearest ground stripe.
+                spacing = stripe_ground_spacing.get(key, float("inf"))
+                if spacing < float("inf"):
+                    cc = coupling_capacitance(length, rl.thickness_nm, spacing, eps_r)
+
             segments.append(
                 Segment(
                     node_a=node_a,
@@ -521,6 +603,7 @@ def _segment_stripes(
                     resistance=r,
                     cap_plate=cp,
                     cap_fringe=cf,
+                    cap_coupling=cc,
                 )
             )
     return segments
@@ -900,6 +983,20 @@ def build_grid(config: Config) -> Grid:
     plocs = _generate_plocs(config, resolved, stripes, nodes, grid_size_x, grid_size_y)
     segments = _segment_stripes(resolved, config, stripes, nodes)
     segments.extend(staple_segments)
+
+    # Apply R/C scaling factors to grid extraction values only.
+    r_scale = config.spice_netlist.scaling.resistance
+    c_scale = config.spice_netlist.scaling.capacitance
+    if r_scale != 1.0:
+        for seg in segments:
+            seg.resistance *= r_scale
+        for via in vias:
+            via.resistance *= r_scale
+    if c_scale != 1.0:
+        for seg in segments:
+            seg.cap_plate *= c_scale
+            seg.cap_fringe *= c_scale
+            seg.cap_coupling *= c_scale
 
     power_net = config.pg_nets.power.name
     ground_net = config.pg_nets.ground.name

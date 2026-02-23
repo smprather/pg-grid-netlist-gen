@@ -51,6 +51,24 @@ def fringe_capacitance(
     return 2.0 * c_per_edge  # both edges
 
 
+def coupling_capacitance(
+    length_nm: float,
+    thickness_nm: float,
+    spacing_nm: float,
+    relative_permittivity: float,
+) -> float:
+    """Calculate plate-to-plate coupling capacitance to nearest ground stripe.
+
+    C = ε₀ × εᵣ × T × L / S
+    """
+    length_m = length_nm * 1e-9
+    thickness_m = thickness_nm * 1e-9
+    spacing_m = spacing_nm * 1e-9
+    if spacing_m <= 0:
+        return 0.0
+    return EPSILON_0 * relative_permittivity * thickness_m * length_m / spacing_m
+
+
 def total_segment_capacitance(
     width_nm: float,
     length_nm: float,

@@ -7,6 +7,13 @@
 - SHOULD: Strong recommendation; deviations must be intentional.
 - MAY: Optional behavior.
 
+## Formatting Rules
+
+- Markdown tables in this file MUST NOT exceed 110 columns per line.
+  - Use relative key paths (omit the section-header prefix).
+  - Abbreviate: "Req" for Required; "Y" / "N" / "Cond" for values.
+  - Use line-wrapping within a cell if needed to stay below the limit.
+
 ## Project Overview
 
 This project is a script that generates:
@@ -46,97 +53,100 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
 
 ### Global Schema
 
-| Key path | Type | Required | Units | Notes |
-|---|---|---|---|---|
-| `random_seed_value` | `number` or `"random"` | Yes | N/A | Global randomness control. |
-| `itf.file` | `string` | Yes | N/A | Path to ITF file. |
-| `itf.units` | `string` | Yes | N/A | ITF distance unit label. |
-| `units.distance` | `string` | Yes | N/A | Distance unit label (e.g. `um`). |
-| `units.capacitance` | `string` | Yes | N/A | Capacitance unit label (e.g. `ff`). |
-| `units.resistance` | `string` | Yes | N/A | Resistance unit label (e.g. `ohms`). |
-| `units.time` | `string` | Yes | N/A | Time unit label (e.g. `ps`). |
-| `beol_thickness` | `number` | Yes | distance | BEOL stack thickness used for reporting/visualization context. |
+| Key | Type | Req | Units | Notes |
+|-----|------|-----|-------|-------|
+| `random_seed_value` | `number` or `"random"` | Y | N/A | Global randomness control. |
+| `itf.file` | `string` | Y | N/A | Path to ITF file. |
+| `itf.units` | `string` | Y | N/A | ITF distance unit label. |
+| `units.distance` | `string` | Y | N/A | Distance unit (e.g. `um`). |
+| `units.capacitance` | `string` | Y | N/A | Capacitance unit (e.g. `ff`). |
+| `units.resistance` | `string` | Y | N/A | Resistance unit (e.g. `ohms`). |
+| `units.time` | `string` | Y | N/A | Time unit (e.g. `ps`). |
+| `feol_thickness` | `number` | Y | distance | M0-to-substrate distance for cap calc. |
 
 ### `standard_cells[]` Schema
 
-| Key path | Type | Required | Units | Notes |
-|---|---|---|---|---|
-| `standard_cells[].name` | `string` | Yes | N/A | Cell name/subckt name basis. |
-| `standard_cells[].height` | `number` | Yes | distance | Physical cell height. |
-| `standard_cells[].width` | `number` | Yes | distance | Physical cell width. |
-| `standard_cells[].pins[]` | `list` | Yes | N/A | Pin definitions. |
-| `standard_cells[].pins[].name` | `string` | Yes | N/A | Pin name. |
-| `standard_cells[].pins[].type` | `string` | Yes | N/A | Allowed: `signal`, `power`, `ground`. |
-| `standard_cells[].pins[].direction` | `string` | Conditionally | N/A | Required when `type=signal`; allowed: `input`, `output`, `inout`. |
-| `standard_cells[].pins[].location` | `string` | Yes | N/A | Allowed: `left`, `right`, `top`, `bottom`. |
-| `standard_cells[].spice_port_order` | `string` | Yes | N/A | Space-delimited ordered port list. |
-| `standard_cells[].unateness` | `string` | No | N/A | Allowed: `positive` (non-inverting), `negative` (inverting). Default: `positive`. |
-| `standard_cells[].spice_netlist_file` | `string` | No | path | Optional external SPICE file to include with `.include`; file existence is not validated at generation time. |
+| Key | Type | Req | Units | Notes |
+|-----|------|-----|-------|-------|
+| `name` | `string` | Y | N/A | Cell name / subckt name. |
+| `height` | `number` | Y | distance | Physical cell height. |
+| `width` | `number` | Y | distance | Physical cell width. |
+| `pins[]` | `list` | Y | N/A | Pin definitions. |
+| `pins[].name` | `string` | Y | N/A | Pin name. |
+| `pins[].type` | `string` | Y | N/A | `signal`, `power`, or `ground`. |
+| `pins[].direction` | `string` | Cond | N/A | For `type=signal`. `input`/`output`/`inout`. |
+| `pins[].location` | `string` | Y | N/A | `left`, `right`, `top`, or `bottom`. |
+| `spice_port_order` | `string` | Y | N/A | Space-delimited ordered port list. |
+| `unateness` | `string` | N | N/A | `positive` or `negative`. Default: `positive`. |
+| `spice_netlist_file` | `string` | N | path | External `.include` file; not validated. |
 
 ### `ploc` Schema
 
-| Key path | Type | Required | Units | Notes |
-|---|---|---|---|---|
-| `ploc.pitch` | `number` | Yes | distance | PLOC pitch. |
-| `ploc.staggered` | `bool` | Yes | N/A | Enables staggered rows/columns of PLOCs. |
-| `ploc.offset_from_origin.x` | `number` | Yes | distance | X offset from origin. |
-| `ploc.offset_from_origin.y` | `number` | Yes | distance | Y offset from origin. |
-| `ploc.visualizer_render_diameter` | `number` | No | distance | Diameter of PLOC circles in 2D visualization. |
+| Key | Type | Req | Units | Notes |
+|-----|------|-----|-------|-------|
+| `pitch` | `number` | Y | distance | PLOC pitch. |
+| `staggered` | `bool` | Y | N/A | Staggered rows/columns of PLOCs. |
+| `offset_from_origin.x` | `number` | Y | distance | X offset from origin. |
+| `offset_from_origin.y` | `number` | Y | distance | Y offset from origin. |
+| `visualizer_render_diameter` | `number` | N | distance | PLOC circle diameter in visualization. |
 
 ### `spice_netlist` Schema
 
-| Key path | Type | Required | Units | Notes |
-|---|---|---|---|---|
-| `spice_netlist.cell_chains.chain_cell` | `string` | Yes | N/A | `standard_cells` name for chains. |
-| `spice_netlist.cell_chains.cell_output_loads.in_chain.resistance` | `number` | Yes | resistance | Per-link R. |
-| `spice_netlist.cell_chains.cell_output_loads.in_chain.capacitance` | `number` | Yes | capacitance | Per-link C. |
-| `spice_netlist.cell_chains.cell_output_loads.in_chain.number_pi_segments` | `int` | Yes | N/A | Pi sections. |
-| `spice_netlist.cell_chains.cell_output_loads.end_of_chain.*` | same | Yes | same | Last-stage load (also pi model). |
-| `spice_netlist.cell_chains.chain_input_stimulus.period` | `number` | Yes | time | PULSE period. |
-| `spice_netlist.cell_chains.chain_input_stimulus.transition_time` | `number` | Yes | time | Rise/fall time. |
-| `spice_netlist.cell_chains.max_instance_count_per_chain` | `int` | Yes | N/A | Max instances per chain. |
-| `spice_netlist.transient_simulation.total_time` | `number` | Yes | time | Transient stop time. |
-| `spice_netlist.transient_simulation.time_step` | `number` | Yes | time | Transient step. |
-| `spice_netlist.ir_drop_measurement.averaging_window.start` | `number` | Yes | % | Start threshold as % of power voltage on the input-net transition. |
-| `spice_netlist.ir_drop_measurement.averaging_window.end` | `number` | Yes | % | End threshold as % of power voltage on the output-net transition. |
+| Key | Type | Req | Units | Notes |
+|-----|------|-----|-------|-------|
+| `scaling.resistance` | `number` | N | N/A | Grid R multiplier. Default: 1.0. |
+| `scaling.capacitance` | `number` | N | N/A | Grid C multiplier. Default: 1.0. |
+| `cell_chains.chain_cell` | `string` | Y | N/A | `standard_cells` name for chains. |
+| `cell_chains.cell_output_loads.in_chain.resistance` | `number` | Y | resistance | Per-link R. |
+| `cell_chains.cell_output_loads.in_chain.capacitance` | `number` | Y | capacitance | Per-link C. |
+| `cell_chains.cell_output_loads.in_chain.number_pi_segments` | `int` | Y | N/A | Pi sections. |
+| `cell_chains.cell_output_loads.end_of_chain.*` | same | Y | same | Last-stage load (pi model). |
+| `cell_chains.chain_input_stimulus.period` | `number` | Y | time | PULSE period. |
+| `cell_chains.chain_input_stimulus.transition_time` | `number` | Y | time | Rise/fall time. |
+| `cell_chains.max_instance_count_per_chain` | `int` | Y | N/A | Max instances per chain. |
+| `transient_simulation.total_time` | `number` | Y | time | Transient stop time. |
+| `transient_simulation.time_step` | `number` | Y | time | Transient step. |
+| `ir_drop_measurement.averaging_window.start` | `number` | Y | % | Start % on input transition. |
+| `ir_drop_measurement.averaging_window.end` | `number` | Y | % | End % on output transition. |
 
 ### `visualizer` Schema
 
-| Key path | Type | Required | Units | Notes |
-|---|---|---|---|---|
-| `visualizer.initial_visible_objects` | `list[string]` | No | N/A | Legend entry names to show on load; all others start as `legendonly`. |
+| Key | Type | Req | Units | Notes |
+|-----|------|-----|-------|-------|
+| `initial_visible_objects` | `list[string]` | N | N/A | Legend entries visible on load; rest hidden. |
 
 ### `standard_cell_placement` Schema
 
-| Key path | Type | Required | Units | Notes |
-|---|---|---|---|---|
-| `standard_cell_placement.row_height` | `number` | Yes | distance | Placement row pitch. |
-| `standard_cell_placement.site_width` | `number` | Yes | distance | Placement site pitch. |
-| `standard_cell_placement.min_space.x` | `number` | Yes | distance | Minimum center-to-center spacing in X. |
-| `standard_cell_placement.min_space.y` | `number` | Yes | distance | Minimum center-to-center spacing in Y. |
-| `standard_cell_placement.stagger_row_start.range` | `number` | Yes | distance | Row-start stagger amplitude. |
-| `standard_cell_placement.stagger_row_start.random` | `bool` | Yes | N/A | Randomize row-start offset if true. |
-| `standard_cell_placement.dcap_cells.enabled` | `bool` | No | N/A | Enable dcap insertion. Default: false. |
-| `standard_cell_placement.dcap_cells.cell` | `string` | No | N/A | `standard_cells` name for dcaps. |
-| `standard_cell_placement.dcap_cells.max_density_pct` | `number` | No | % | Max area density (0-100). |
+| Key | Type | Req | Units | Notes |
+|-----|------|-----|-------|-------|
+| `row_height` | `number` | Y | distance | Placement row pitch. |
+| `site_width` | `number` | Y | distance | Placement site pitch. |
+| `min_space.x` | `number` | Y | distance | Min center-to-center X spacing. |
+| `min_space.y` | `number` | Y | distance | Min center-to-center Y spacing. |
+| `stagger_row_start.range` | `number` | Y | distance | Row-start stagger amplitude. |
+| `stagger_row_start.random` | `bool` | Y | N/A | Randomize row-start offset. |
+| `dcap_cells.enabled` | `bool` | N | N/A | Enable dcap insertion. Default: false. |
+| `dcap_cells.cell` | `string` | N | N/A | `standard_cells` name for dcaps. |
+| `dcap_cells.max_density_pct` | `number` | N | % | Max area density (0-100). |
 
 ### `pg_nets` Schema
 
-| Key path | Type | Required | Units | Notes |
-|---|---|---|---|---|
-| `pg_nets.power.name` | `string` | Yes | N/A | Power-net name; MUST match cell power pin name. |
-| `pg_nets.power.voltage` | `number` | Yes | volts | Ideal supply voltage at power PLOCs. |
-| `pg_nets.ground.name` | `string` | Yes | N/A | Ground-net name; MUST match cell ground pin name. |
+| Key | Type | Req | Units | Notes |
+|-----|------|-----|-------|-------|
+| `power.name` | `string` | Y | N/A | Power-net name; MUST match cell power pin. |
+| `power.voltage` | `number` | Y | volts | Ideal supply voltage at power PLOCs. |
+| `ground.name` | `string` | Y | N/A | Ground-net name; MUST match cell ground pin. |
 
 ### `grid` Schema
 
-| Key path | Type | Required | Units | Notes |
-|---|---|---|---|---|
-| `grid.size.rows` | `int` | Yes | rows | Number of placement rows. |
-| `grid.size.sites` | `int` | Yes | sites | Number of placement sites per row. |
-| `grid.layer_usage.<LAYER>.type` | `string` | Yes | N/A | Enum: `g` (grid stripe), `s` (staple). |
-| `grid.layer_usage.<LAYER>.width` | `number` | Yes | distance | Metal width for configured layer. |
-| `grid.layer_usage.<LAYER>.pitch` | `number` | Yes | distance | Stripe pitch for `g`; retained for uniformity on `s`. |
+| Key | Type | Req | Units | Notes |
+|-----|------|-----|-------|-------|
+| `via_min_space_factor` | `number` | N | N/A | Via min-space = via_side * factor. Default: 1.5. |
+| `size.rows` | `int` | Y | rows | Number of placement rows. |
+| `size.sites` | `int` | Y | sites | Number of sites per row. |
+| `layer_usage.<LAYER>.type` | `string` | Y | N/A | `g` (grid stripe) or `s` (staple). |
+| `layer_usage.<LAYER>.width` | `number` | Y | distance | Metal width for layer. |
+| `layer_usage.<LAYER>.pitch` | `number` | Y | distance | Stripe pitch for `g`. |
 
 #### Layer-usage enum and implicit defaults
 
@@ -164,15 +174,26 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
   segments where the pin lands. This is not required if the cell pin lands exactly on the edge of a segment of metal. In this
   case, just tap the cell into the grid at the pre-existing node.
 - Add HSPICE .PROBE to probe the voltage of every pin of every instance. `.PROBE V(X*)`
+- Netlist node names should begin with the net name of the segment the R or C is associated with.
+- New netlist nodes MUST be created at:
+  - The top and bottom of VIAs.
+  - Where cell or dcap cell PG pins touches the lowest layer of metal.
+  - Where PLOC points touch the layer of metal they connect to.
+  - Where any metal stripe touches the edge of the defined grid area.
+- For the capacitance of each metal segment, connect half of the cap at each end of the segment (pi model).
+- Connect all capacitors the ground net. Do not attempt to connect to the nearest ground net segment. For example,
+  if VSS is the ground net name, then all caps should connect to VSS.
 
 ### RC extraction formulas
 
+- Only do capacitance calculation on PG nets of power type.
+- For capacitance calculation to substrate, the distance from the bottom of the lowest layer of metal to the substrate is feol_thickness.
 - Metal segment resistance MUST use `R = RPSQ * (L / W)`.
 - Via resistance MUST use ITF `RPV`.
-- Segment capacitance MUST include only:
+- Segment capacitance MUST include:
   - Plate-to-substrate capacitance.
   - Fringe-to-substrate capacitance (isolated-wire assumption).
-- Capacitance to other conductors MUST NOT be included.
+  - Plate-to-plate capacitance from each power net segment to the nearest ground net on same layer.
 - Via capacitance and staple-shape capacitance MUST NOT be included.
 
 ### Staple resistance model
@@ -196,13 +217,17 @@ For a staple layer between adjacent routed layers (example `M7-V6-M6-V5-M5`), ve
   - Connectivity is established by matching a power-type PG net to a power-type pin on the cell.
     Same for ground type net to pin.
 - MUST NOT allow placement overlap with any other cells, dcap or chain.
+- For each VIA layer, calculate the min-space as the length of a side of a via, times grid.via_min_space_factor.
+- For the visualizer, place the maximum number of minimum-spaced VIAs between adjacment-layer metal stripes of
+  the same net. However, for the purposes of node creation and resistance extraction, treat the group of vias
+  as a single via with R=RPV/number_of_vias_used_in_visualizer. In other words, for extraction, model the group
+  of vias as a single r-scaled via located in the middle of the metal stripe.
 
 ### Decoupling capacitance cell insertion
 
 - If enabled, insert decoupling caps (dcaps) until the maximum density is reached. Density is defined as the total area of the
   dcap cells divided by the total area of the grid.
-- Draw them in the visualizer using a different legend group than the chain cell instances so that visibility can be independently
-  controlled.
+- Draw them in the visualizer using a different legend group than the chain cell instances so that visibility can be independently controlled.
 
 ### Chain generation
 
@@ -254,13 +279,46 @@ The generator MUST fail fast with a clear error message when validation fails.
 ## Visualization Requirements
 
 - Use Plotly legend entries for layer visibility control. A dropdown MUST NOT be used.
+
 - Initial visibility MUST show:
+
   - Standard-cell instances.
   - Bottom 4 metal layers of the generated grid.
   - Via layers that touch those bottom 4 metal layers.
+
 - All other layers SHOULD initialize as `visible='legendonly'`.
+
 - Flight lines MUST be drawn in their own legend trace group so users can toggle them.
+
 - A cross-section visualization of the ITF stack MUST be placed below the 2D render.
+
+  - VIA shapes in the VIA layers should be labeled with just VIA<N>
+  - Don't label the shapes in the plot. Just use a legend to label the layers.
+  - Any layers with the same thickness should share the same color.
+  - Render FEOL as a layer. The botomm of the FEOL layer should represent the y=0 point.
+  - Render the substrate as a layer equal to 3x the thickness to the FEOL layer.
+  - The legend should show the layers in the correct vertical order with the highest layer
+    of metal at the top, and the substrate at the bottom.
+  - Do not include the "M<N>_diel" layers. Just render the VIAs.
+  - For substrate oply, add a label to the layer.
+
+- Use include_plotlyjs=True to support offline usage, but only in the first div (see below).
+
+- Use this method to make the 2D layout and ITF cross section two independent plots in
+  a single html file.
+
+  ```python
+      # Create two independent plots
+      fig1 = go.Figure(go.Scatter(x=[1,2], y=[1,2]))
+      fig2 = go.Figure(go.Bar(x=[1,2], y=[2,1]))
+      # Generate HTML divs
+      div1 = pyo.plot(fig1, include_plotlyjs=True, output_type='div')
+      div2 = pyo.plot(fig2, include_plotlyjs=False, output_type='div')
+      # Combine in HTML
+      html_content = f"<html><body>{div1}{div2}</body></html>"
+      with open('two_plots.html', 'w') as f:
+          f.write(html_content)
+  ```
 
 ## Output Contract
 
@@ -276,6 +334,8 @@ Unless overridden by explicit CLI options, outputs MUST be written to `output/` 
      - Total PG capacitance.
      - Total resistor count.
      - Total capacitor count.
+     - Total capacitance to substrate
+     - Total capacitance to same-layer
      - Total chain instance count.
      - Total chain count.
      - Total dcap cell count.
@@ -300,10 +360,12 @@ Implementation SHOULD follow this sequence:
 
 1. Create and maintain the top-level README.md.
 
-- MUST contain a link to the live-demo at https://smprather.github.io/pg-grid-netlist-gen
-- MUST contain a link to the configuration file documentation.
+   - MUST contain a link to the live-demo at https://smprather.github.io/pg-grid-netlist-gen
+   - MUST contain a link to the configuration file documentation.
 
-2. Create the configuration file documentation in the docs/ directory.
+1. Create the configuration file documentation in the docs/ directory.
+
+   - MUST include a description of all configuration parameters.
 
 ## Tech Stack
 
@@ -312,3 +374,4 @@ Implementation SHOULD follow this sequence:
 - Rich-Click for CLI
 - Plotly for visualization
 - Use python's Pathlib whenever possible
+

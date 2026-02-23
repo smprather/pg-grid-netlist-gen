@@ -32,6 +32,7 @@ class Segment:
     resistance: float = 0.0  # Ω
     cap_plate: float = 0.0  # F
     cap_fringe: float = 0.0  # F
+    cap_coupling: float = 0.0  # F (plate-to-plate to nearest ground)
 
 
 @dataclass
@@ -45,6 +46,7 @@ class ViaConnection:
     height: float  # nm (via thickness)
     net: str
     resistance: float = 0.0  # Ω
+    via_count: int = 1  # number of parallel vias (for visualizer)
 
 
 @dataclass

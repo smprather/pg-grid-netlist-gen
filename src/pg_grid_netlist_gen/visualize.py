@@ -6,7 +6,7 @@ import math
 from pathlib import Path
 
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import plotly.offline as pyo
 
 from pg_grid_netlist_gen.config import Config
 from pg_grid_netlist_gen.geometry import CellPlacement, Grid
@@ -96,6 +96,84 @@ def _via_points_from_itf_connection(
     return _stripe_intersections_for_layers(grid, itf_via.from_layer, itf_via.to_layer)
 
 
+def _is_grid_layer(config: Config, layer_name: str) -> bool:
+    """Check if a layer is a grid-type layer (not staple)."""
+    usage = config.grid.layer_usage.get(layer_name)
+    if usage is not None:
+        return usage.type == "g"
+    # The implicit lowest layer is always grid-type.
+    return layer_name == config.lowest_metal_layer_name
+
+
+def _multi_via_rects(
+    x_center: float,
+    y_center: float,
+    top_stripe_w: float,
+    bot_stripe_w: float,
+    via_side: float,
+    min_space_factor: float,
+) -> list[tuple[float, float, float, float]]:
+    """Return list of (x0, y0, x1, y1) for each via in a 2D array at a crossing."""
+    rect_w = top_stripe_w
+    rect_h = bot_stripe_w
+    via_pitch = via_side * min_space_factor
+    if via_pitch <= 0:
+        half = via_side / 2.0
+        return [(x_center - half, y_center - half, x_center + half, y_center + half)]
+
+    n_x = max(1, int(rect_w / via_pitch))
+    n_y = max(1, int(rect_h / via_pitch))
+
+    # Center the array within the overlap rectangle.
+    array_w = (n_x - 1) * via_pitch if n_x > 1 else 0.0
+    array_h = (n_y - 1) * via_pitch if n_y > 1 else 0.0
+    start_x = x_center - array_w / 2.0
+    start_y = y_center - array_h / 2.0
+
+    rects: list[tuple[float, float, float, float]] = []
+    half = via_side / 2.0
+    for ix in range(n_x):
+        for iy in range(n_y):
+            cx = start_x + ix * via_pitch
+            cy = start_y + iy * via_pitch
+            rects.append((cx - half, cy - half, cx + half, cy + half))
+    return rects
+
+
+def _stripe_intersections_with_widths(
+    grid: Grid, config: Config, layer_a: str, layer_b: str
+) -> list[tuple[float, float, str, float, float]]:
+    """Like _stripe_intersections_for_layers but also returns stripe widths.
+
+    Returns list of (x, y, net, stripe_a_width, stripe_b_width).
+    """
+    stripes_a = [s for s in grid.stripes if s.layer == layer_a]
+    stripes_b = [s for s in grid.stripes if s.layer == layer_b]
+    if not stripes_a or not stripes_b:
+        return []
+
+    points: list[tuple[float, float, str, float, float]] = []
+    seen: set[tuple[int, int, str]] = set()
+    for sa in stripes_a:
+        for sb in stripes_b:
+            if sa.net != sb.net:
+                continue
+            if sa.direction == "horizontal" and sb.direction == "vertical":
+                x, y = sb.position, sa.position
+            elif sa.direction == "vertical" and sb.direction == "horizontal":
+                x, y = sa.position, sb.position
+            else:
+                continue
+
+            key = (int(round(x)), int(round(y)), sa.net)
+            if key in seen:
+                continue
+            seen.add(key)
+            points.append((x, y, sa.net, sa.width, sb.width))
+
+    return points
+
+
 def _pin_side_for_cell(cell: CellPlacement, pin_location: str) -> str:
     """Return effective pin side after row flipping."""
     if not cell.flipped:
@@ -152,11 +230,65 @@ def _ploc_color(config: Config, net_name: str) -> str:
     return PLOC_DEFAULT_COLOR
 
 
-def _add_cross_section(fig: go.Figure, config: Config) -> None:
-    """Add a stack cross-section in subplot row 2."""
+def _build_cross_section(config: Config) -> go.Figure:
+    """Build a standalone cross-section figure of the ITF stack.
+
+    Requirements from AGENTS.md:
+    - Render FEOL as a layer; bottom of FEOL = y=0
+    - Show substrate as a layer equal in thickness to FEOL, below it
+    - VIA shapes labeled with just VIA<N>
+    - No in-plot shape labels — use legend only
+    - Layers with the same thickness share the same color
+    - Legend order: highest layer at top, substrate at bottom
+    """
+    fig = go.Figure()
+
+    dielectrics = {d.name: d for d in config.itf_stack.dielectrics}
+    conductors_bottom_up = list(reversed(config.itf_stack.conductors))
+    # Top-to-bottom order for legend ordering.
+    conductors_top_to_bottom = list(config.itf_stack.conductors)
+
+    feol_thickness_nm = config.distance_to_nm(config.feol_thickness)
+
+    # Collect all layer thicknesses to build a thickness-to-color map.
+    all_thicknesses: list[float] = []
+    for metal in conductors_bottom_up:
+        all_thicknesses.append(metal.thickness_nm)
+    all_thicknesses.append(feol_thickness_nm)  # FEOL and substrate share this thickness
+
+    unique_thicknesses = sorted(set(round(t, 6) for t in all_thicknesses if t > 0))
+    # Assign a distinct color per unique thickness.
+    _palette = [
+        "rgba(40, 120, 220, 0.70)",
+        "rgba(40, 170, 90, 0.70)",
+        "rgba(220, 150, 50, 0.70)",
+        "rgba(210, 70, 70, 0.70)",
+        "rgba(130, 80, 190, 0.70)",
+        "rgba(245, 175, 80, 0.70)",
+        "rgba(80, 190, 190, 0.70)",
+        "rgba(190, 50, 50, 0.70)",
+        "rgba(100, 200, 100, 0.70)",
+        "rgba(200, 100, 200, 0.70)",
+        "rgba(160, 160, 60, 0.70)",
+        "rgba(60, 160, 160, 0.70)",
+    ]
+    thickness_color: dict[float, str] = {}
+    for i, t in enumerate(unique_thicknesses):
+        thickness_color[t] = _palette[i % len(_palette)]
+
+    def _color_for_thickness(t: float) -> str:
+        return thickness_color.get(round(t, 6), "rgba(130, 130, 130, 0.70)")
+
+    # Track which legend names have already been shown.
+    shown_legend: set[str] = set()
 
     def _add_rect(
-        x0: float, x1: float, z_bottom: float, z_top: float, color: str
+        x0: float,
+        x1: float,
+        z_bottom: float,
+        z_top: float,
+        color: str,
+        legend_name: str,
     ) -> None:
         x = [x0, x1, x1, x0, x0, None]
         y = [
@@ -167,6 +299,8 @@ def _add_cross_section(fig: go.Figure, config: Config) -> None:
             z_bottom / 1000.0,
             None,
         ]
+        show = legend_name not in shown_legend
+        shown_legend.add(legend_name)
         fig.add_trace(
             go.Scatter(
                 x=x,
@@ -175,36 +309,25 @@ def _add_cross_section(fig: go.Figure, config: Config) -> None:
                 fill="toself",
                 fillcolor=color,
                 line=dict(color=color, width=0.5),
-                showlegend=False,
-                hoverinfo="skip",
+                name=legend_name,
+                legendgroup=legend_name,
+                showlegend=show,
+                hoverinfo="text",
+                hovertext=legend_name,
+                hovertemplate="%{hovertext}<extra></extra>",
             ),
-            row=2,
-            col=1,
         )
 
-    def _add_label(text: str, z_bottom: float, z_top: float) -> None:
-        fig.add_annotation(
-            x=0.5,
-            y=((z_bottom + z_top) / 2.0) / 1000.0,
-            text=text,
-            showarrow=False,
-            xref="x2",
-            yref="y2",
-            font=dict(size=10),
-        )
-
-    dielectrics = {d.name: d for d in config.itf_stack.dielectrics}
-    conductors_bottom_up = list(reversed(config.itf_stack.conductors))
-
-    # Draw full-width metals and dielectrics.
-    z = 0.0
+    # --- First pass: compute all z-coordinates bottom-up ---
+    # y=0 = bottom of FEOL.  Substrate sits below at (-feol_thickness, 0).
+    # FEOL sits at (0, feol_thickness). Metals start at feol_thickness.
+    z = feol_thickness_nm  # bottom of lowest metal
     metal_z: dict[str, tuple[float, float]] = {}
+    diel_z: dict[str, tuple[float, float]] = {}
     for metal in conductors_bottom_up:
         m_bottom = z
         m_top = m_bottom + metal.thickness_nm
         metal_z[metal.name] = (m_bottom, m_top)
-        _add_rect(0.0, 1.0, m_bottom, m_top, _get_color(metal.name))
-        _add_label(metal.name, m_bottom, m_top)
         z = m_top
 
         diel_name = f"{metal.name}_diel"
@@ -212,16 +335,14 @@ def _add_cross_section(fig: go.Figure, config: Config) -> None:
         if dielectric is not None and dielectric.thickness_nm > 0:
             d_bottom = z
             d_top = d_bottom + dielectric.thickness_nm
-            _add_rect(0.0, 1.0, d_bottom, d_top, OXIDE_COLOR)
-            _add_label(diel_name, d_bottom, d_top)
+            diel_z[diel_name] = (d_bottom, d_top)
             z = d_top
 
-    # Build sample via "plugs" centered between connected metal layers.
-    via_entries: list[tuple[object, float, float, float]] = []
-    for via in config.itf_stack.vias:
+    # Compute via z-coordinates.
+    via_entries: list[tuple[object, float, float, float, int]] = []
+    for idx, via in enumerate(config.itf_stack.vias):
         from_layer = via.from_layer
         to_layer = via.to_layer
-
         if from_layer not in metal_z or to_layer not in metal_z:
             continue
 
@@ -239,30 +360,85 @@ def _add_cross_section(fig: go.Figure, config: Config) -> None:
 
         via_side = max(via.area_nm2, 0.0) ** 0.5
         if via_top <= via_bottom:
-            # Ensure a visible plug even if layer spacing data collapses.
             via_top = via_bottom + max(via_side, 1.0)
 
-        via_entries.append((via, via_bottom, via_top, via_side))
+        via_entries.append((via, via_bottom, via_top, via_side, idx))
 
-    # Normalize via widths to the top-most via layer's side length.
+    # Normalize via widths for rendering.
     ref_side = 0.0
     if via_entries:
-        top_entry = max(
-            via_entries, key=lambda t: t[1]
-        )  # highest via by stack position
+        top_entry = max(via_entries, key=lambda t: t[1])
         ref_side = top_entry[3]
     if ref_side <= 0.0:
         ref_side = max((entry[3] for entry in via_entries), default=1.0)
     if ref_side <= 0.0:
         ref_side = 1.0
 
-    for via, via_bottom, via_top, via_side in via_entries:
-        # Top-most via renders at width 0.12; others scale relative to it.
-        width_norm = via_side / ref_side
-        half_w = max(0.001, min(0.45, 0.06 * width_norm))
-        via_x0, via_x1 = 0.5 - half_w, 0.5 + half_w
-        _add_rect(via_x0, via_x1, via_bottom, via_top, _get_color(via.name))
-        _add_label(via.name, via_bottom, via_top)
+    # --- Second pass: add traces in top-to-bottom order for correct legend ---
+    # Build a via lookup: keyed by (from_layer, to_layer) or (to_layer, from_layer).
+    via_by_upper_lower: dict[
+        tuple[str, str], tuple[object, float, float, float, int]
+    ] = {}
+    for entry in via_entries:
+        via_obj, vb, vt, vs, vi = entry
+        from_layer = via_obj.from_layer
+        to_layer = via_obj.to_layer
+        from_z_val = metal_z.get(from_layer, (0, 0))
+        to_z_val = metal_z.get(to_layer, (0, 0))
+        if from_z_val[0] >= to_z_val[0]:
+            upper, lower = from_layer, to_layer
+        else:
+            upper, lower = to_layer, from_layer
+        via_by_upper_lower[(upper, lower)] = entry
+
+    for i, metal in enumerate(conductors_top_to_bottom):
+        # Add metal layer.
+        m_bottom, m_top = metal_z[metal.name]
+        _add_rect(
+            0.0,
+            1.0,
+            m_bottom,
+            m_top,
+            _color_for_thickness(metal.thickness_nm),
+            metal.name,
+        )
+
+        # If there's a via below this metal (connecting to next metal down), add it.
+        if i < len(conductors_top_to_bottom) - 1:
+            next_metal = conductors_top_to_bottom[i + 1]
+            entry = via_by_upper_lower.get((metal.name, next_metal.name))
+            if entry is not None:
+                via_obj, via_bottom, via_top, via_side, via_idx = entry
+                width_norm = via_side / ref_side
+                half_w = max(0.001, min(0.45, 0.06 * width_norm))
+                via_x0, via_x1 = 0.5 - half_w, 0.5 + half_w
+                via_label = f"VIA{via_idx}"
+                _add_rect(via_x0, via_x1, via_bottom, via_top, VIA_COLOR, via_label)
+
+        # Add dielectric above the metal below (visually between this metal and next).
+        diel_name = f"{metal.name}_diel"
+        if diel_name in diel_z:
+            d_bottom, d_top = diel_z[diel_name]
+            _add_rect(0.0, 1.0, d_bottom, d_top, OXIDE_COLOR, diel_name)
+
+    # FEOL layer: from y=0 to y=feol_thickness.
+    feol_color = "rgba(180, 160, 120, 0.70)"
+    _add_rect(0.0, 1.0, 0.0, feol_thickness_nm, feol_color, "FEOL")
+
+    # Substrate layer: equal thickness to FEOL, below FEOL.
+    substrate_color = "rgba(140, 140, 160, 0.70)"
+    _add_rect(0.0, 1.0, -feol_thickness_nm, 0.0, substrate_color, "Substrate")
+
+    fig.update_layout(
+        title="ITF Layer Cross-Section",
+        xaxis=dict(showticklabels=False, title="", range=[0, 1]),
+        yaxis=dict(title="Height (um)"),
+        legend=dict(orientation="v", traceorder="normal"),
+        width=1050,
+        height=800,
+    )
+
+    return fig
 
 
 def render_grid(
@@ -274,7 +450,12 @@ def render_grid(
     save_image_layer: str | None = None,
     output_dir: Path | None = None,
 ) -> None:
-    """Render combined 2D grid and layer-stack cross-section to HTML."""
+    """Render combined 2D grid and layer-stack cross-section to HTML.
+
+    Uses two independent Plotly figures combined into a single HTML file
+    via plotly.offline.plot() with include_plotlyjs=True for the first
+    div and include_plotlyjs=False for the second.
+    """
     if not (output_path or save_image_layer):
         return
 
@@ -285,13 +466,7 @@ def render_grid(
 
     region_nm = tuple(c * 1000 for c in viz_region) if viz_region else None
 
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        vertical_spacing=0.08,
-        row_heights=[0.72, 0.84],
-        subplot_titles=("2D Grid and Cells", "ITF Layer Cross-Section"),
-    )
+    fig = go.Figure()
 
     generated_metal_layers = {seg.layer for seg in grid.segments}
     bottom_to_top = [c.name for c in reversed(config.itf_stack.conductors)]
@@ -307,7 +482,9 @@ def render_grid(
     configured_visible_objects: set[str] | None = None
     if config.visualizer and config.visualizer.initial_visible_objects is not None:
         configured_visible_objects = {
-            str(name).strip() for name in config.visualizer.initial_visible_objects if str(name).strip()
+            str(name).strip()
+            for name in config.visualizer.initial_visible_objects
+            if str(name).strip()
         }
 
     def _legend_visibility(name: str, default_visible: bool) -> bool | str:
@@ -381,7 +558,9 @@ def render_grid(
                 )
 
             if by_net:
-                visible = _legend_visibility(layer_name, layer_name in bottom_four_visible)
+                visible = _legend_visibility(
+                    layer_name, layer_name in bottom_four_visible
+                )
                 for idx, (net_name, (shapes_x, shapes_y)) in enumerate(
                     sorted(by_net.items())
                 ):
@@ -402,43 +581,96 @@ def render_grid(
                             hovertemplate="%{hovertext}<extra></extra>",
                             visible=visible,
                         ),
-                        row=1,
-                        col=1,
                     )
 
         elif beol_layer.type == "via":
             by_net: dict[str, tuple[list[float | None], list[float | None]]] = {}
             via_w = beol_layer.min_width or 0.0
-            derived_points = _via_points_from_itf_connection(grid, config, layer_name)
-            if derived_points:
-                for x_nm, y_nm, net_name in derived_points:
+
+            # Determine if this via connects two grid layers for multi-via rendering.
+            itf_via_obj = next(
+                (v for v in config.itf_stack.vias if v.name == layer_name), None
+            )
+            is_grid_to_grid = (
+                itf_via_obj is not None
+                and _is_grid_layer(config, itf_via_obj.from_layer)
+                and _is_grid_layer(config, itf_via_obj.to_layer)
+            )
+
+            if is_grid_to_grid and itf_via_obj is not None:
+                # Multi-via array rendering for grid-to-grid crossings.
+                via_side = (
+                    math.sqrt(itf_via_obj.area_nm2)
+                    if itf_via_obj.area_nm2 > 0
+                    else via_w
+                )
+                cross_pts = _stripe_intersections_with_widths(
+                    grid, config, itf_via_obj.from_layer, itf_via_obj.to_layer
+                )
+                for x_nm, y_nm, net_name, w_a, w_b in cross_pts:
                     if region_nm and not _in_region_point(x_nm, y_nm, region_nm):
                         continue
-                    half_w = via_w / 2.0
-                    x0, y0 = x_nm - half_w, y_nm - half_w
-                    x1, y1 = x_nm + half_w, y_nm + half_w
+                    rects = _multi_via_rects(
+                        x_nm, y_nm, w_a, w_b, via_side, config.grid.via_min_space_factor
+                    )
                     xs, ys = by_net.setdefault(net_name, ([], []))
-                    xs.extend(
-                        [
-                            x0 / 1000.0,
-                            x1 / 1000.0,
-                            x1 / 1000.0,
-                            x0 / 1000.0,
-                            x0 / 1000.0,
-                            None,
-                        ]
-                    )
-                    ys.extend(
-                        [
-                            y0 / 1000.0,
-                            y0 / 1000.0,
-                            y1 / 1000.0,
-                            y1 / 1000.0,
-                            y0 / 1000.0,
-                            None,
-                        ]
-                    )
-            else:
+                    for vx0, vy0, vx1, vy1 in rects:
+                        xs.extend(
+                            [
+                                vx0 / 1000.0,
+                                vx1 / 1000.0,
+                                vx1 / 1000.0,
+                                vx0 / 1000.0,
+                                vx0 / 1000.0,
+                                None,
+                            ]
+                        )
+                        ys.extend(
+                            [
+                                vy0 / 1000.0,
+                                vy0 / 1000.0,
+                                vy1 / 1000.0,
+                                vy1 / 1000.0,
+                                vy0 / 1000.0,
+                                None,
+                            ]
+                        )
+
+            elif itf_via_obj is not None:
+                # Single-via rendering for non-grid-to-grid connections.
+                derived_points = _via_points_from_itf_connection(
+                    grid, config, layer_name
+                )
+                if derived_points:
+                    for x_nm, y_nm, net_name in derived_points:
+                        if region_nm and not _in_region_point(x_nm, y_nm, region_nm):
+                            continue
+                        half_w = via_w / 2.0
+                        x0, y0 = x_nm - half_w, y_nm - half_w
+                        x1, y1 = x_nm + half_w, y_nm + half_w
+                        xs, ys = by_net.setdefault(net_name, ([], []))
+                        xs.extend(
+                            [
+                                x0 / 1000.0,
+                                x1 / 1000.0,
+                                x1 / 1000.0,
+                                x0 / 1000.0,
+                                x0 / 1000.0,
+                                None,
+                            ]
+                        )
+                        ys.extend(
+                            [
+                                y0 / 1000.0,
+                                y0 / 1000.0,
+                                y1 / 1000.0,
+                                y1 / 1000.0,
+                                y0 / 1000.0,
+                                None,
+                            ]
+                        )
+
+            if not by_net:
                 for via in grid.vias:
                     if via.via_layer != layer_name:
                         continue
@@ -473,7 +705,9 @@ def render_grid(
                     )
 
             if by_net:
-                visible = _legend_visibility(layer_name, layer_name in visible_via_layers)
+                visible = _legend_visibility(
+                    layer_name, layer_name in visible_via_layers
+                )
                 for idx, (net_name, (shapes_x, shapes_y)) in enumerate(
                     sorted(by_net.items())
                 ):
@@ -494,8 +728,6 @@ def render_grid(
                             hovertemplate="%{hovertext}<extra></extra>",
                             visible=visible,
                         ),
-                        row=1,
-                        col=1,
                     )
 
     # Cells (chain cells).
@@ -531,8 +763,6 @@ def render_grid(
                     hoverinfo="name",
                     visible=_legend_visibility("Cells", True),
                 ),
-                row=1,
-                col=1,
             )
 
     # Dcap Cells.
@@ -571,8 +801,6 @@ def render_grid(
                     hoverinfo="name",
                     visible=_legend_visibility("Dcap Cells", True),
                 ),
-                row=1,
-                col=1,
             )
 
     # Flight lines.
@@ -632,8 +860,6 @@ def render_grid(
                         hoverinfo="name",
                         visible=_legend_visibility("Flight Lines", False),
                     ),
-                    row=1,
-                    col=1,
                 )
 
     # PLOC points. Add last so they appear at the bottom of legend stack.
@@ -676,36 +902,39 @@ def render_grid(
                     hovertemplate="%{hovertext}<extra></extra>",
                     visible=(
                         _legend_visibility(f"PLOC:{net_name}", True)
-                        if configured_visible_objects is None or "PLOC" not in configured_visible_objects
+                        if configured_visible_objects is None
+                        or "PLOC" not in configured_visible_objects
                         else True
                     ),
                 ),
-                row=1,
-                col=1,
             )
-
-    _add_cross_section(fig, config)
 
     fig.update_layout(
         title=f"Power Grid View - {config.beol_stack.technology}",
         width=1050,
-        height=1872,
+        height=1050,
         legend=dict(orientation="v"),
+        xaxis=dict(title="X (um)"),
+        yaxis=dict(title="Y (um)", scaleanchor="x", scaleratio=1),
     )
 
-    fig.update_xaxes(title_text="X (um)", row=1, col=1)
-    fig.update_yaxes(title_text="Y (um)", row=1, col=1, scaleanchor="x", scaleratio=1)
-
-    fig.update_xaxes(showticklabels=False, title_text="", range=[0, 1], row=2, col=1)
-    fig.update_yaxes(title_text="Height (um)", row=2, col=1)
+    # Build the cross-section as an independent figure.
+    fig2 = _build_cross_section(config)
 
     if output_path:
-        # fig.write_html(str(output_path), include_plotlyjs="cdn")
-        fig.write_html(str(output_path))
+        # Two independent plots in a single HTML file per AGENTS.md.
+        div1 = pyo.plot(fig, include_plotlyjs=True, output_type="div")
+        div2 = pyo.plot(fig2, include_plotlyjs=False, output_type="div")
+        html_content = f"<html><body>{div1}{div2}</body></html>"
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(output_path, "w") as f:
+            f.write(html_content)
+
         if open_browser:
             import webbrowser
 
-            webbrowser.open(f"file://{Path(output_path).resolve()}")
+            webbrowser.open(f"file://{output_path.resolve()}")
 
     if save_image_layer:
         # Reserved for future static-image extraction implementation.
