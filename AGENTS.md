@@ -13,6 +13,7 @@
   - Use relative key paths (omit the section-header prefix).
   - Abbreviate: "Req" for Required; "Y" / "N" / "Cond" for values.
   - Use line-wrapping within a cell if needed to stay below the limit.
+  - Keep Notes column concise.
 
 ## Project Overview
 
@@ -299,7 +300,7 @@ The generator MUST fail fast with a clear error message when validation fails.
   - Render the substrate as a layer equal to 3x the thickness to the FEOL layer.
   - The legend should show the layers in the correct vertical order with the highest layer
     of metal at the top, and the substrate at the bottom.
-  - Do not include the "M<N>_diel" layers. Just render the VIAs.
+  - Do not include the "M<N>\_diel" layers. Just render the VIAs.
   - For substrate oply, add a label to the layer.
 
 - Use include_plotlyjs=True to support offline usage, but only in the first div (see below).
@@ -374,4 +375,3 @@ Implementation SHOULD follow this sequence:
 - Rich-Click for CLI
 - Plotly for visualization
 - Use python's Pathlib whenever possible
-
