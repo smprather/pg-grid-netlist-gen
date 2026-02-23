@@ -235,15 +235,15 @@ def _build_cross_section(config: Config) -> go.Figure:
 
     Requirements from AGENTS.md:
     - Render FEOL as a layer; bottom of FEOL = y=0
-    - Show substrate as a layer equal in thickness to FEOL, below it
+    - Show substrate as a layer 3x the FEOL thickness, below FEOL
+    - Add an in-plot "Substrate" label on the substrate layer
     - VIA shapes labeled with just VIA<N>
-    - No in-plot shape labels — use legend only
+    - No legend panel — hover-data is sufficient
+    - Do not render dielectric layers (skip <via_layer>_diel)
     - Layers with the same thickness share the same color
-    - Legend order: highest layer at top, substrate at bottom
     """
     fig = go.Figure()
 
-    dielectrics = {d.name: d for d in config.itf_stack.dielectrics}
     conductors_bottom_up = list(reversed(config.itf_stack.conductors))
     # Top-to-bottom order for legend ordering.
     conductors_top_to_bottom = list(config.itf_stack.conductors)
@@ -279,9 +279,6 @@ def _build_cross_section(config: Config) -> go.Figure:
     def _color_for_thickness(t: float) -> str:
         return thickness_color.get(round(t, 6), "rgba(130, 130, 130, 0.70)")
 
-    # Track which legend names have already been shown.
-    shown_legend: set[str] = set()
-
     def _add_rect(
         x0: float,
         x1: float,
@@ -299,8 +296,6 @@ def _build_cross_section(config: Config) -> go.Figure:
             z_bottom / 1000.0,
             None,
         ]
-        show = legend_name not in shown_legend
-        shown_legend.add(legend_name)
         fig.add_trace(
             go.Scatter(
                 x=x,
@@ -311,7 +306,7 @@ def _build_cross_section(config: Config) -> go.Figure:
                 line=dict(color=color, width=0.5),
                 name=legend_name,
                 legendgroup=legend_name,
-                showlegend=show,
+                showlegend=False,
                 hoverinfo="text",
                 hovertext=legend_name,
                 hovertemplate="%{hovertext}<extra></extra>",
@@ -319,11 +314,11 @@ def _build_cross_section(config: Config) -> go.Figure:
         )
 
     # --- First pass: compute all z-coordinates bottom-up ---
-    # y=0 = bottom of FEOL.  Substrate sits below at (-feol_thickness, 0).
+    # y=0 = bottom of FEOL.  Substrate sits below at (-3*feol_thickness, 0).
     # FEOL sits at (0, feol_thickness). Metals start at feol_thickness.
     z = feol_thickness_nm  # bottom of lowest metal
+    dielectrics = {d.name: d for d in config.itf_stack.dielectrics}
     metal_z: dict[str, tuple[float, float]] = {}
-    diel_z: dict[str, tuple[float, float]] = {}
     for metal in conductors_bottom_up:
         m_bottom = z
         m_top = m_bottom + metal.thickness_nm
@@ -333,10 +328,7 @@ def _build_cross_section(config: Config) -> go.Figure:
         diel_name = f"{metal.name}_diel"
         dielectric = dielectrics.get(diel_name)
         if dielectric is not None and dielectric.thickness_nm > 0:
-            d_bottom = z
-            d_top = d_bottom + dielectric.thickness_nm
-            diel_z[diel_name] = (d_bottom, d_top)
-            z = d_top
+            z += dielectric.thickness_nm
 
     # Compute via z-coordinates.
     via_entries: list[tuple[object, float, float, float, int]] = []
@@ -415,25 +407,31 @@ def _build_cross_section(config: Config) -> go.Figure:
                 via_label = f"VIA{via_idx}"
                 _add_rect(via_x0, via_x1, via_bottom, via_top, VIA_COLOR, via_label)
 
-        # Add dielectric above the metal below (visually between this metal and next).
-        diel_name = f"{metal.name}_diel"
-        if diel_name in diel_z:
-            d_bottom, d_top = diel_z[diel_name]
-            _add_rect(0.0, 1.0, d_bottom, d_top, OXIDE_COLOR, diel_name)
-
     # FEOL layer: from y=0 to y=feol_thickness.
     feol_color = "rgba(180, 160, 120, 0.70)"
     _add_rect(0.0, 1.0, 0.0, feol_thickness_nm, feol_color, "FEOL")
 
-    # Substrate layer: equal thickness to FEOL, below FEOL.
+    # Substrate layer: 3x FEOL thickness, below FEOL.
     substrate_color = "rgba(140, 140, 160, 0.70)"
-    _add_rect(0.0, 1.0, -feol_thickness_nm, 0.0, substrate_color, "Substrate")
+    substrate_bottom = -3 * feol_thickness_nm
+    _add_rect(0.0, 1.0, substrate_bottom, 0.0, substrate_color, "Substrate")
+
+    # In-plot label for substrate.
+    substrate_mid_y = (substrate_bottom / 1000.0 + 0.0) / 2.0
+    fig.add_annotation(
+        x=0.5,
+        y=substrate_mid_y,
+        text="Substrate",
+        showarrow=False,
+        font=dict(size=14, color="white"),
+        xanchor="center",
+        yanchor="middle",
+    )
 
     fig.update_layout(
         title="ITF Layer Cross-Section",
         xaxis=dict(showticklabels=False, title="", range=[0, 1]),
         yaxis=dict(title="Height (um)"),
-        legend=dict(orientation="v", traceorder="normal"),
         width=1050,
         height=800,
     )

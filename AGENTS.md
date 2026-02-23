@@ -293,15 +293,13 @@ The generator MUST fail fast with a clear error message when validation fails.
 
 - A cross-section visualization of the ITF stack MUST be placed below the 2D render.
 
-  - VIA shapes in the VIA layers should be labeled with just VIA<N>
   - Don't label the shapes in the plot. Just use a legend to label the layers.
   - Any layers with the same thickness should share the same color.
   - Render FEOL as a layer. The botomm of the FEOL layer should represent the y=0 point.
   - Render the substrate as a layer equal to 3x the thickness to the FEOL layer.
-  - The legend should show the layers in the correct vertical order with the highest layer
-    of metal at the top, and the substrate at the bottom.
-  - Do not include the "M<N>\_diel" layers. Just render the VIAs.
-  - For substrate oply, add a label to the layer.
+  - Do not include the "\<via_layer>\_diel" layers. Just render the VIAs.
+  - For substrate only, add a label to the layer.
+  - Don't add the legend. The layer hover-data is good enough.
 
 - Use include_plotlyjs=True to support offline usage, but only in the first div (see below).
 
