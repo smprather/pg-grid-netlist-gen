@@ -39,7 +39,7 @@ This project is a script that generates:
 - Grid layer: A routing layer containing full-span horizontal or vertical stripes.
 - Staple layer: A layer represented by local square metal patches with vias above and below.
 - Flight line: A visualization line from one instance output pin to another instance input pin.
-- IR drop: `V(power_pin) - V(ground_pin)` averaged over a configured transient window.
+- IR drop: `avg(V(power_pin) - V(ground_pin)) / VDD_nominal` — percent drop averaged over a configured transient window.
 - CPP: Contacted Poly Pitch (minimum horizontal spacing between FinFET transistors).
 - Site width: Horizontal placement quantum. A cell left edge MUST lie on an integer multiple of site width.
 - Unateness: Determines whether a logic cell is inverting from input to output.
@@ -77,9 +77,8 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
 | `pins[].type` | `string` | Y | N/A | `signal`, `power`, or `ground`. |
 | `pins[].direction` | `string` | Cond | N/A | For `type=signal`. `input`/`output`/`inout`. |
 | `pins[].location` | `string` | Y | N/A | `left`, `right`, `top`, or `bottom`. |
-| `spice_port_order` | `string` | Y | N/A | Space-delimited ordered port list. |
 | `unateness` | `string` | N | N/A | `positive` or `negative`. Default: `positive`. |
-| `spice_netlist_file` | `string` | N | path | External `.include` file; not validated. |
+| `spice_netlist_file` | `string` | Y | path | SPICE file with `.subckt`; port order is parsed from it. |
 
 ### `ploc` Schema
 
@@ -97,18 +96,30 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
 |-----|------|-----|-------|-------|
 | `scaling.resistance` | `number` | N | N/A | Grid R multiplier. Default: 1.0. |
 | `scaling.capacitance` | `number` | N | N/A | Grid C multiplier. Default: 1.0. |
-| `cell_chains.chain_cell` | `string` | Y | N/A | `standard_cells` name for chains. |
-| `cell_chains.cell_output_loads.in_chain.resistance` | `number` | Y | resistance | Per-link R. |
-| `cell_chains.cell_output_loads.in_chain.capacitance` | `number` | Y | capacitance | Per-link C. |
-| `cell_chains.cell_output_loads.in_chain.number_pi_segments` | `int` | Y | N/A | Pi sections. |
-| `cell_chains.cell_output_loads.end_of_chain.*` | same | Y | same | Last-stage load (pi model). |
+| `cell_chains.cell` | `string` | Y | N/A | `standard_cells` name for chains. |
+| `cell_chains.interconnect.resistance` | `number` | Y | resistance | Total R for pi interconnect. |
+| `cell_chains.interconnect.capacitance` | `number` | Y | capacitance | Total C for pi interconnect. |
+| `cell_chains.interconnect.number_pi_segments` | `int` | Y | N/A | Pi sections between cells. |
+| `cell_chains.end_of_chain_load.resistance` | `number` | Y | resistance | Last-stage RC load R. |
+| `cell_chains.end_of_chain_load.capacitance` | `number` | Y | capacitance | Last-stage RC load C. |
 | `cell_chains.chain_input_stimulus.period` | `number` | Y | time | PULSE period. |
-| `cell_chains.chain_input_stimulus.transition_time` | `number` | Y | time | Rise/fall time. |
+| `cell_chains.chain_input_stimulus.transition_time` | `object` | Y | time | Gaussian variation: see below. |
+| `cell_chains.chain_input_stimulus.initial_delay` | `object` | Y | time | Gaussian variation: see below. |
 | `cell_chains.max_instance_count_per_chain` | `int` | Y | N/A | Max instances per chain. |
-| `transient_simulation.total_time` | `number` | Y | time | Transient stop time. |
-| `transient_simulation.time_step` | `number` | Y | time | Transient step. |
 | `ir_drop_measurement.averaging_window.start` | `number` | Y | % | Start % on input transition. |
 | `ir_drop_measurement.averaging_window.end` | `number` | Y | % | End % on output transition. |
+| `user_defined_lines` | `list[string]` | N | N/A | Raw SPICE lines emitted after header. |
+
+#### Gaussian variation object schema
+
+Used by `transition_time` and `initial_delay`. Each chain samples independently.
+
+| Key | Type | Req | Notes |
+|-----|------|-----|-------|
+| `nominal` | `number` | Y | Mean value. |
+| `sigma` | `number` | Y | Standard deviation (>= 0). |
+| `floor` | `number` | Y | Minimum clamp (<= nominal). |
+| `ceiling` | `number` | Y | Maximum clamp (>= nominal). |
 
 ### `visualizer` Schema
 
@@ -160,7 +171,7 @@ The YAML file (currently `config.yaml`) defines technology, grid, placement, PLO
 - The lowest metal layer in ITF is implicit and SHOULD be omitted from `grid.layer_usage`.
 - For the implicit lowest layer:
   - `type` MUST be treated as `grid`.
-  - `width` MUST be the ITF `WMIN` of that lowest conductor.
+  - `width` MUST be `2.0 * WMIN` of that lowest conductor.
   - `pitch` MUST equal `standard_cell_placement.row_height`.
 - All explicitly configured layer names MUST exist as ITF `CONDUCTOR` names.
 
@@ -236,7 +247,8 @@ For a staple layer between adjacent routed layers (example `M7-V6-M6-V5-M5`), ve
 - A cell can only be used in a chain once.
 - Continue until `max_instance_count_per_chain` is reached per chain.
 - Continue creating chains until all instances are assigned.
-- Chain-loading values MUST come from `spice_netlist.cell_chains.cell_output_loads.in_chain`, with last-stage values from `end_of_chain`.
+- Between each pair of consecutive cells, a multi-segment pi-model interconnect MUST bridge the output of cell N to the input of cell N+1, using `cell_chains.interconnect` (R, C, number_pi_segments).
+- The last cell in each chain MUST have a simple RC load on its output from `cell_chains.end_of_chain_load`.
 - Input stimulus MUST use a SPICE `PULSE` source with configured period and transition time.
 
 ## Determinism and Randomness
@@ -275,7 +287,7 @@ The generator MUST fail fast with a clear error message when validation fails.
 - `grid.size.rows >= 1` and `grid.size.sites >= 1`.
 - `max_instance_count_per_chain >= 1`.
 - Averaging-window percentages MUST satisfy `0 <= start < end <= 100`.
-- `spice_port_order` pins MUST exactly match declared pin names for each standard cell.
+- `.subckt` ports in `spice_netlist_file` MUST exactly match declared pin names for each standard cell.
 
 ## Visualization Requirements
 

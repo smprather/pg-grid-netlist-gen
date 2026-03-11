@@ -84,7 +84,7 @@ def _resolve_layers(config: Config) -> list[ResolvedLayer]:
         if usage is None:
             # Implicit lowest-layer behavior.
             layer_type = "grid"
-            width_nm = beol_layer.min_width or 0.0
+            width_nm = 2.0 * (beol_layer.min_width or 0.0)
             actual_pitch_nm = config.distance_to_nm(config.standard_cell_placement.row_height)
         else:
             layer_type = usage.type
@@ -616,7 +616,7 @@ def _chain_standard_cells(cells: list[CellPlacement], config: Config, rng: rando
 
     rng.shuffle(cells)
 
-    cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+    cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.cell)
     input_pins = [p.name for p in cell_cfg.pins if p.direction == "input" and p.type == "signal"]
     output_pins = [p.name for p in cell_cfg.pins if p.direction == "output" and p.type == "signal"]
     if not input_pins or not output_pins:
@@ -635,9 +635,8 @@ def _chain_standard_cells(cells: list[CellPlacement], config: Config, rng: rando
         for j in range(len(chain) - 1):
             cell_a = chain[j]
             cell_b = chain[j + 1]
-            connection_net = f"chain_{chain_num}_link_{j}"
-            cell_a.pin_connections[output_pin] = connection_net
-            cell_b.pin_connections[input_pin] = connection_net
+            cell_a.pin_connections[output_pin] = f"chain_{chain_num}_link_{j}"
+            cell_b.pin_connections[input_pin] = f"chain_{chain_num}_link_{j}_in"
 
         chain[-1].pin_connections[output_pin] = f"CHAIN_{chain_num}_OUT"
         chain_num += 1
@@ -669,7 +668,7 @@ def _place_standard_cells(
     power_net_name = config.pg_nets.power.name
     ground_net_name = config.pg_nets.ground.name
 
-    cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+    cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.cell)
     cell_width_nm = config.distance_to_nm(cell_cfg.width)
     half_w = cell_width_nm / 2.0
 
@@ -858,7 +857,7 @@ def _place_dcap_cells(
     ground_net_name = config.pg_nets.ground.name
     site_w_nm = config.distance_to_nm(config.standard_cell_placement.site_width)
 
-    chain_cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+    chain_cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.cell)
     chain_w_nm = config.distance_to_nm(chain_cell_cfg.width)
 
     # Build occupied intervals per row from chain cells
@@ -961,8 +960,8 @@ def _place_dcap_cells(
     return dcap_cells
 
 
-def build_grid(config: Config) -> Grid:
-    """Build the complete power grid from configuration."""
+def build_grid(config: Config) -> tuple[Grid, random.Random]:
+    """Build the complete power grid from configuration. Returns (grid, rng)."""
     rng = config.make_rng()
     resolved = _resolve_layers(config)
     nodes: dict[str, Node] = {}
@@ -1018,4 +1017,4 @@ def build_grid(config: Config) -> Grid:
         dcap_cells=dcap_cells,
         plocs=plocs,
         nodes=nodes,
-    )
+    ), rng

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import random
 from collections import defaultdict
 from pathlib import Path
 from typing import TextIO
 
-from pg_grid_netlist_gen.config import Config
+from pg_grid_netlist_gen.config import Config, GaussianVariationConfig
 from pg_grid_netlist_gen.geometry import Grid
 
 
@@ -14,12 +15,18 @@ def _first_pin_name_of_type(cell_cfg, pin_type: str) -> str | None:
     return next((p.name for p in cell_cfg.pins if p.type == pin_type), None)
 
 
-def _write_chain_stimulus(f: TextIO, grid: Grid, config: Config):
+def _sample_variation(cfg: GaussianVariationConfig, rng: random.Random) -> float:
+    """Sample a value from a Gaussian distribution, clamped to [floor, ceiling]."""
+    value = rng.gauss(cfg.nominal, cfg.sigma)
+    return max(cfg.floor, min(cfg.ceiling, value))
+
+
+def _write_chain_stimulus(f: TextIO, grid: Grid, config: Config, rng: random.Random):
     f.write("* === Chain Input Stimulus ===\n")
     stimulus_cfg = config.spice_netlist.cell_chains.chain_input_stimulus
     power_voltage = config.pg_nets.power.voltage
 
-    chain_cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+    chain_cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.cell)
     input_pin = next(
         (p.name for p in chain_cell_cfg.pins if p.direction == "input" and p.type == "signal"),
         None,
@@ -30,38 +37,65 @@ def _write_chain_stimulus(f: TextIO, grid: Grid, config: Config):
     # Find all unique chain input nets
     input_nets = {c.pin_connections.get(input_pin) for c in grid.cells if c.pin_connections.get(input_pin, '').startswith("CHAIN_")}
 
+    tu = config.units.time
     for net in sorted(input_nets):
         if net:
+            tt = _sample_variation(stimulus_cfg.transition_time, rng)
+            delay = _sample_variation(stimulus_cfg.initial_delay, rng)
+            half_period = stimulus_cfg.period / 2
             f.write(
-                f"V_{net} {net} 0 PULSE(0 {power_voltage} 0 "
-                f"{stimulus_cfg.transition_time}{config.units.time} "
-                f"{stimulus_cfg.transition_time}{config.units.time} "
-                f"{(stimulus_cfg.period / 2)}{config.units.time} "
-                f"{stimulus_cfg.period}{config.units.time})\n"
+                f"V_{net} {net} 0 PULSE(0 {power_voltage} "
+                f"{delay}{tu} {tt}{tu} {tt}{tu} "
+                f"{half_period}{tu} {stimulus_cfg.period}{tu})\n"
             )
     f.write("\n")
 
-def _write_pi_load(f: TextIO, output_net: str, load_cfg, config: Config):
-    """Write a pi-segment load model for a chain link."""
-    r = load_cfg.resistance
-    c_f = _cap_value_to_f(load_cfg.capacitance, config.units.capacitance)
-    n_seg = max(1, load_cfg.number_pi_segments)
+
+def _write_pi_interconnect(
+    f: TextIO, from_net: str, to_net: str, icn_cfg, config: Config,
+) -> None:
+    """Write a multi-segment pi-model interconnect from from_net to to_net.
+
+    For N segments the topology is:
+        from_net ─┬─ C ─┬─ R ─┬─ C ─┬─ R ─┬─ C ─┬─ to_net
+                  GND        GND        GND
+    with N resistors and N+1 capacitors.
+    """
+    r = icn_cfg.resistance
+    c_f = _cap_value_to_f(icn_cfg.capacitance, config.units.capacitance)
+    n_seg = max(1, icn_cfg.number_pi_segments)
     r_per = r / n_seg
     c_per_f = c_f / (n_seg + 1)
-    node = output_net
+
+    node = from_net
     for seg_idx in range(n_seg):
-        next_node = f"{output_net}_pi_{seg_idx+1}"
-        f.write(f"C_{output_net}_piC_{seg_idx} {node} 0 {_format_value(c_per_f)}\n")
-        f.write(f"R_{output_net}_piR_{seg_idx} {node} {next_node} {_format_value(r_per)}\n")
+        f.write(f"C_{from_net}_piC_{seg_idx} {node} 0 {_format_value(c_per_f)}\n")
+        if seg_idx < n_seg - 1:
+            next_node = f"{from_net}_pi_{seg_idx + 1}"
+        else:
+            next_node = to_net
+        f.write(f"R_{from_net}_piR_{seg_idx} {node} {next_node} {_format_value(r_per)}\n")
         node = next_node
-    f.write(f"C_{output_net}_piC_{n_seg} {node} 0 {_format_value(c_per_f)}\n")
+    # Final cap at the to_net end
+    f.write(f"C_{from_net}_piC_{n_seg} {node} 0 {_format_value(c_per_f)}\n")
+
+
+def _write_end_of_chain_load(
+    f: TextIO, output_net: str, load_cfg, config: Config,
+) -> None:
+    """Write a simple RC load to ground on the last cell's output."""
+    r = load_cfg.resistance
+    c_f = _cap_value_to_f(load_cfg.capacitance, config.units.capacitance)
+    load_node = f"{output_net}_eoc"
+    f.write(f"R_{output_net}_eoc {output_net} {load_node} {_format_value(r)}\n")
+    f.write(f"C_{output_net}_eoc {load_node} 0 {_format_value(c_f)}\n")
 
 
 def _write_chain_loads(f: TextIO, grid: Grid, config: Config):
-    f.write("* === Cell-to-Cell Loads ===\n")
-    loads_cfg = config.spice_netlist.cell_chains.cell_output_loads
+    f.write("* === Chain Interconnects and Loads ===\n")
+    chains_cfg = config.spice_netlist.cell_chains
 
-    chain_cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+    chain_cell_cfg = config.get_cell_by_name(chains_cfg.cell)
     output_pin = next(
         (p.name for p in chain_cell_cfg.pins if p.direction == "output" and p.type == "signal"),
         None,
@@ -78,34 +112,45 @@ def _write_chain_loads(f: TextIO, grid: Grid, config: Config):
         if not output_net or not output_net.lower().startswith("chain_"):
             continue
 
-        # Check if this is the last cell in a chain
-        is_last_in_chain = not any(output_net == c.pin_connections.get(input_pin) for c in grid.cells)
-
-        if is_last_in_chain:
-            _write_pi_load(f, output_net, loads_cfg.end_of_chain, config)
+        # End-of-chain outputs are named CHAIN_<n>_OUT
+        if output_net.endswith("_OUT"):
+            _write_end_of_chain_load(f, output_net, chains_cfg.end_of_chain_load, config)
         else:
-            _write_pi_load(f, output_net, loads_cfg.in_chain, config)
+            # Interconnect links: output is chain_<n>_link_<j>,
+            # next cell's input is chain_<n>_link_<j>_in
+            to_net = f"{output_net}_in"
+            _write_pi_interconnect(f, output_net, to_net, chains_cfg.interconnect, config)
     f.write("\n")
 
 
-def write_netlist(grid: Grid, config: Config, output_path: str | Path) -> None:
+def write_netlist(grid: Grid, config: Config, output_path: str | Path, rng: random.Random) -> None:
     """Write the SPICE netlist to a file."""
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w") as f:
         _write_header(f, config)
+        _write_user_defined_lines(f, config)
         _write_sources(f, grid, config)
-        _write_chain_stimulus(f, grid, config)
+        _write_chain_stimulus(f, grid, config, rng)
         _write_subckt_stubs(f, config)
         _write_resistors(f, grid)
         _write_via_resistors(f, grid)
         _write_capacitors(f, grid, config)
         _write_cells(f, grid, config)
         _write_chain_loads(f, grid, config)
-        _write_analysis(f, config)
+        _write_analysis(f)
         _write_measurements(f, grid, config)
         f.write("\n.end\n")
+
+
+def _write_user_defined_lines(f: TextIO, config: Config) -> None:
+    lines = config.spice_netlist.user_defined_lines
+    if lines:
+        f.write("* === User Defined Lines ===\n")
+        for line in lines:
+            f.write(f"{line}\n")
+        f.write("\n")
 
 
 def _write_header(f: TextIO, config: Config) -> None:
@@ -150,21 +195,13 @@ def _write_sources(f: TextIO, grid: Grid, config: Config) -> None:
 
 
 def _write_subckt_stubs(f: TextIO, config: Config) -> None:
-    f.write("* === Standard Cell Model Includes / Stubs ===\n")
+    f.write("* === Standard Cell Model Includes ===\n")
     included_files: set[str] = set()
     for cell_cfg in config.standard_cells:
-        netlist_file = (cell_cfg.spice_netlist_file or "").strip()
-        if netlist_file:
-            if netlist_file not in included_files:
-                f.write(f'.include "{netlist_file}"\n')
-                included_files.add(netlist_file)
-            continue
-
-        pins = cell_cfg.spice_port_order
-        f.write(f".subckt {cell_cfg.name} {pins}\n")
-        # Basic model for a buffer for simulation purposes
-        f.write("a1 %vd(A) %vd(Y) nand\n")
-        f.write(f".ends {cell_cfg.name}\n")
+        netlist_file = cell_cfg.spice_netlist_file
+        if netlist_file not in included_files:
+            f.write(f'.include "{netlist_file}"\n')
+            included_files.add(netlist_file)
     f.write("\n")
 
 
@@ -209,9 +246,8 @@ def _write_cells(f: TextIO, grid: Grid, config: Config) -> None:
 
     for cell in grid.cells:
         cell_cfg = next(c for c in config.standard_cells if c.name == cell.cell_name)
-        pin_order = cell_cfg.spice_port_order.split()
         pin_nodes: list[str] = []
-        for pin in pin_order:
+        for pin in cell_cfg.spice_port_order:
             metal_node = cell.pin_connections.get(pin, f"NC_{pin}")
             pin_nodes.append(metal_node)
         pins_str = " ".join(pin_nodes)
@@ -221,19 +257,16 @@ def _write_cells(f: TextIO, grid: Grid, config: Config) -> None:
         f.write("\n* === Dcap Cell Instances ===\n")
         for cell in grid.dcap_cells:
             cell_cfg = next(c for c in config.standard_cells if c.name == cell.cell_name)
-            pin_order = cell_cfg.spice_port_order.split()
             pin_nodes: list[str] = []
-            for pin in pin_order:
+            for pin in cell_cfg.spice_port_order:
                 metal_node = cell.pin_connections.get(pin, f"NC_{pin}")
                 pin_nodes.append(metal_node)
             pins_str = " ".join(pin_nodes)
             f.write(f"{cell.instance_name} {pins_str} {cell.cell_name}\n")
     f.write("\n")
 
-def _write_analysis(f: TextIO, config: Config) -> None:
+def _write_analysis(f: TextIO) -> None:
     f.write("* === Analysis ===\n")
-    sim = config.spice_netlist.transient_simulation
-    f.write(f".tran {sim['time_step']}{config.units.time} {sim['total_time']}{config.units.time}\n")
     f.write(".PROBE V(X*)\n")
     f.write("\n")
 
@@ -287,6 +320,8 @@ def _write_measurements(f: TextIO, grid: Grid, config: Config) -> None:
     fall_end_level = power_voltage * (1.0 - end_pct)
 
     measure_names: list[str] = []
+    probe_nodes: set[str] = set()
+    probe_diffs: set[tuple[str, str]] = set()
 
     for cell in grid.cells:
         cell_cfg = cell_cfg_by_name.get(cell.cell_name)
@@ -303,6 +338,10 @@ def _write_measurements(f: TextIO, grid: Grid, config: Config) -> None:
         if not vdd_node or not vss_node:
             continue
 
+        probe_nodes.add(vdd_node)
+        probe_nodes.add(vss_node)
+        probe_diffs.add((vdd_node, vss_node))
+
         input_pin_name = next(
             (p.name for p in cell_cfg.pins if p.type == "signal" and p.direction == "input"),
             None,
@@ -313,6 +352,11 @@ def _write_measurements(f: TextIO, grid: Grid, config: Config) -> None:
         )
         in_node = cell.pin_connections.get(input_pin_name) if input_pin_name else None
         out_node = cell.pin_connections.get(output_pin_name) if output_pin_name else None
+
+        if in_node:
+            probe_nodes.add(in_node)
+        if out_node:
+            probe_nodes.add(out_node)
 
         for out_edge in ("RISE", "FALL"):
             measure_name = f"IR_DROP_{cell.instance_name}_{out_edge}"
@@ -335,15 +379,14 @@ def _write_measurements(f: TextIO, grid: Grid, config: Config) -> None:
                 )
                 f.write(
                     f".measure tran {measure_name} "
-                    f"AVG 'v({vdd_node}) - v({vss_node})' FROM='{t_start}' TO='{t_end}'\n"
+                    f"AVG '(v({vdd_node}) - v({vss_node}))/{power_voltage}' FROM='{t_start}' TO='{t_end}'\n"
                 )
             else:
                 # Fallback if signal pins are unavailable for this cell.
-                sim_total_time = config.spice_netlist.transient_simulation["total_time"]
-                measure_time = sim_total_time / 2.0
+                measure_time = config.spice_netlist.cell_chains.chain_input_stimulus.period / 2.0
                 f.write(
                     f".measure tran {measure_name} "
-                    f"find 'v({vdd_node}) - v({vss_node})' at={measure_time}{config.units.time}\n"
+                    f"find '(v({vdd_node}) - v({vss_node}))/{power_voltage}' at={measure_time}{config.units.time}\n"
                 )
             measure_names.append(measure_name)
 
@@ -356,6 +399,18 @@ def _write_measurements(f: TextIO, grid: Grid, config: Config) -> None:
             _write_long_measure(f, "MAX_IR_DROP", f"max({', '.join(measure_names)})")
             avg_expr = f"({' + '.join(measure_names)})/{len(measure_names)}"
             _write_long_measure(f, "AVG_IR_DROP", avg_expr)
+    f.write("\n")
+
+    # Single-ended probes for every voltage node used in .measure lines.
+    f.write("* === Measurement Probes ===\n")
+    for node in sorted(probe_nodes):
+        f.write(f".probe v({node})\n")
+    f.write("\n")
+
+    # Differential probes mirroring the AVG expressions.
+    f.write("* === Differential Probes ===\n")
+    for vdd_n, vss_n in sorted(probe_diffs):
+        f.write(f".probe v({vdd_n}, {vss_n})\n")
     f.write("\n")
 
 

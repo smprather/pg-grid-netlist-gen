@@ -40,7 +40,7 @@ def generate(
     config = load_config(config_file)
 
     click.echo("Building grid...")
-    grid = build_grid(config)
+    grid, rng = build_grid(config)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if report:
@@ -57,7 +57,7 @@ def generate(
 
         netlist_path = output_dir / "pg_grid_netlist.sp"
         click.echo(f"Writing netlist: {netlist_path}")
-        write_netlist(grid, config, netlist_path)
+        write_netlist(grid, config, netlist_path, rng)
 
     if viz or save_image:
         from pg_grid_netlist_gen.visualize import render_grid

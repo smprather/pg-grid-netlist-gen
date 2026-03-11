@@ -27,9 +27,8 @@ configuration parameters.
 | `pins[].type` | `string` | Pin type: `signal`, `power`, or `ground`. |
 | `pins[].direction` | `string` | Required for signal pins: `input`, `output`, or `inout`. |
 | `pins[].location` | `string` | Pin side: `left`, `right`, `top`, or `bottom`. Signal pins are placed at the midpoint of their declared side. |
-| `spice_port_order` | `string` | Space-delimited ordered port list. Must list each declared pin exactly once. |
 | `unateness` | `string` | `positive` (non-inverting) or `negative` (inverting). Default: `positive`. Affects IR-drop measurement window edge mapping. |
-| `spice_netlist_file` | `string` | Optional path to an external SPICE file to `.include`. File existence is not validated at generation time. |
+| `spice_netlist_file` | `string` | Path to a SPICE file containing the `.subckt` definition. Port order is parsed from the `.subckt` line; ports must match declared pins exactly. |
 
 ## PLOC Settings (`ploc`)
 
@@ -60,21 +59,27 @@ configuration parameters.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `chain_cell` | `string` | Name of the standard cell used for chains (must exist in `standard_cells[]` and have signal pins). |
-| `cell_output_loads.in_chain.resistance` | `number` | Resistance per chain link (pi-model). |
-| `cell_output_loads.in_chain.capacitance` | `number` | Capacitance per chain link (pi-model). |
-| `cell_output_loads.in_chain.number_pi_segments` | `int` | Number of pi sections per chain link. |
-| `cell_output_loads.end_of_chain.*` | same | Last-stage load parameters (same structure as `in_chain`). |
+| `cell` | `string` | Name of the standard cell used for chains (must exist in `standard_cells[]` and have signal pins). |
+| `interconnect.resistance` | `number` | Total resistance for the pi-model interconnect between consecutive cells. |
+| `interconnect.capacitance` | `number` | Total capacitance for the pi-model interconnect between consecutive cells. |
+| `interconnect.number_pi_segments` | `int` | Number of pi sections in the interconnect. Must be >= 1. |
+| `end_of_chain_load.resistance` | `number` | Resistance of the RC load on the last cell's output. |
+| `end_of_chain_load.capacitance` | `number` | Capacitance of the RC load on the last cell's output. |
 | `chain_input_stimulus.period` | `number` | PULSE source period in time units. |
-| `chain_input_stimulus.transition_time` | `number` | PULSE rise/fall time in time units. |
+| `chain_input_stimulus.transition_time` | `object` | Gaussian variation for PULSE rise/fall time. See below. |
+| `chain_input_stimulus.initial_delay` | `object` | Gaussian variation for PULSE initial delay. See below. |
 | `max_instance_count_per_chain` | `int` | Maximum number of instances per chain. Must be >= 1. |
 
-### Transient Simulation
+#### Gaussian Variation Object
+
+Used by `transition_time` and `initial_delay`. Each chain's PULSE source samples independently from the seeded RNG.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `transient_simulation.total_time` | `number` | Transient simulation stop time. |
-| `transient_simulation.time_step` | `number` | Transient simulation time step. |
+| `nominal` | `number` | Mean value. |
+| `sigma` | `number` | Standard deviation. Must be >= 0. |
+| `floor` | `number` | Minimum clamp. Must be <= `nominal`. |
+| `ceiling` | `number` | Maximum clamp. Must be >= `nominal`. |
 
 ### IR Drop Measurement
 
@@ -82,6 +87,12 @@ configuration parameters.
 |-----|------|-------------|
 | `ir_drop_measurement.averaging_window.start` | `number` | Start threshold as a percentage (0-100) of VDD on the input transition. |
 | `ir_drop_measurement.averaging_window.end` | `number` | End threshold as a percentage (0-100) of VDD on the output transition. Must satisfy `start < end`. |
+
+### User Defined Lines
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `user_defined_lines` | `list[string]` | Raw SPICE lines written verbatim after the netlist header. Use for `.include`, `.option`, `.param`, etc. Default: empty. |
 
 ## Standard Cell Placement (`standard_cell_placement`)
 
@@ -119,14 +130,14 @@ Each entry configures a metal layer by its ITF conductor name.
 
 | Key | Type | Description |
 |-----|------|-------------|
-| `type` | `string` | `g` for full-span grid stripe layer, `s` for staple (local patch) layer. |
+| `type` | `string` | `grid` for full-span grid stripe layer, `staple` for staple (local patch) layer. |
 | `width` | `number` | Width multiplier: `actual_width = width * WMIN` from ITF. |
 | `pitch` | `number` | Pitch multiplier: `actual_pitch = pitch * (WMIN + SMIN)` from ITF. |
 
 **Important notes:**
 
 - The lowest metal layer in the ITF is implicit and must **not** be listed in `layer_usage`.
-- For the implicit lowest layer: type is always `g`, width is `WMIN`, pitch equals `row_height`.
+- For the implicit lowest layer: type is always `grid`, width is `2.0 * WMIN`, pitch equals `row_height`.
 - All layer names must exist as ITF `CONDUCTOR` names.
 - For grid-to-grid via crossings, the maximum number of minimum-spaced vias are packed
   in the overlap rectangle for visualization. For extraction, the group is modeled as a

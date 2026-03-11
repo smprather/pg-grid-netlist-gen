@@ -50,9 +50,11 @@ class StandardCellConfig(BaseModel):
     height: float
     width: float
     pins: list[PinConfig]
-    spice_port_order: str
     unateness: Literal["positive", "negative"] = "positive"
-    spice_netlist_file: str | None = None
+    spice_netlist_file: str
+
+    # Populated during validation by parsing the .subckt line in spice_netlist_file.
+    spice_port_order: list[str] = []
 
 
 class PlocConfig(BaseModel):
@@ -66,25 +68,46 @@ class VisualizerConfig(BaseModel):
     initial_visible_objects: list[str] | None = None
 
 
-class CellOutputLoadConfig(BaseModel):
+class InterconnectConfig(BaseModel):
     resistance: float
     capacitance: float
     number_pi_segments: int
 
 
-class CellOutputLoadsConfig(BaseModel):
-    in_chain: CellOutputLoadConfig
-    end_of_chain: CellOutputLoadConfig
+class EndOfChainLoadConfig(BaseModel):
+    resistance: float
+    capacitance: float
+
+
+class GaussianVariationConfig(BaseModel):
+    nominal: float
+    sigma: float
+    floor: float
+    ceiling: float
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> GaussianVariationConfig:
+        if self.sigma < 0:
+            raise ValueError("sigma must be >= 0")
+        if self.floor > self.ceiling:
+            raise ValueError(f"floor ({self.floor}) must be <= ceiling ({self.ceiling})")
+        if not (self.floor <= self.nominal <= self.ceiling):
+            raise ValueError(
+                f"nominal ({self.nominal}) must be between floor ({self.floor}) and ceiling ({self.ceiling})"
+            )
+        return self
 
 
 class ChainInputStimulusConfig(BaseModel):
     period: float
-    transition_time: float
+    transition_time: GaussianVariationConfig
+    initial_delay: GaussianVariationConfig
 
 
 class CellChainsConfig(BaseModel):
-    chain_cell: str
-    cell_output_loads: CellOutputLoadsConfig
+    cell: str
+    interconnect: InterconnectConfig
+    end_of_chain_load: EndOfChainLoadConfig
     chain_input_stimulus: ChainInputStimulusConfig
     max_instance_count_per_chain: int
 
@@ -97,8 +120,8 @@ class ScalingConfig(BaseModel):
 class SpiceNetlistConfig(BaseModel):
     scaling: ScalingConfig = ScalingConfig()
     cell_chains: CellChainsConfig
-    transient_simulation: dict[str, Any]
     ir_drop_measurement: dict[str, Any]
+    user_defined_lines: list[str] = []
 
 
 class DcapCellsConfig(BaseModel):
@@ -324,18 +347,18 @@ class Config(BaseModel):
         if chains_cfg.max_instance_count_per_chain < 1:
             raise ValueError("spice_netlist.cell_chains.max_instance_count_per_chain must be >= 1")
 
-        # Validate chain_cell references a valid standard cell with signal pins
-        chain_cell_name = chains_cfg.chain_cell
+        # Validate chain cell references a valid standard cell with signal pins
+        chain_cell_name = chains_cfg.cell
         try:
             chain_cell = self.get_cell_by_name(chain_cell_name)
         except ValueError:
             raise ValueError(
-                f"spice_netlist.cell_chains.chain_cell '{chain_cell_name}' "
+                f"spice_netlist.cell_chains.cell '{chain_cell_name}' "
                 f"not found in standard_cells[]"
             )
         if not any(p.type == "signal" for p in chain_cell.pins):
             raise ValueError(
-                f"spice_netlist.cell_chains.chain_cell '{chain_cell_name}' "
+                f"spice_netlist.cell_chains.cell '{chain_cell_name}' "
                 f"must have signal pins for chain construction"
             )
 
@@ -383,10 +406,8 @@ class Config(BaseModel):
         if self.feol_thickness <= 0:
             raise ValueError("feol_thickness must be > 0")
 
-        if chains_cfg.cell_output_loads.in_chain.number_pi_segments < 1:
-            raise ValueError("spice_netlist.cell_chains.cell_output_loads.in_chain.number_pi_segments must be >= 1")
-        if chains_cfg.cell_output_loads.end_of_chain.number_pi_segments < 1:
-            raise ValueError("spice_netlist.cell_chains.cell_output_loads.end_of_chain.number_pi_segments must be >= 1")
+        if chains_cfg.interconnect.number_pi_segments < 1:
+            raise ValueError("spice_netlist.cell_chains.interconnect.number_pi_segments must be >= 1")
 
         for cell in self.standard_cells:
             for pin in cell.pins:
@@ -395,11 +416,21 @@ class Config(BaseModel):
                         f"standard_cells[{cell.name}].pins[{pin.name}] must set direction for signal pins"
                     )
 
-            pin_names = [p.name for p in cell.pins]
-            port_names = cell.spice_port_order.split()
-            if len(port_names) != len(pin_names) or set(port_names) != set(pin_names):
+            spice_path = Path(cell.spice_netlist_file)
+            if not spice_path.exists():
                 raise ValueError(
-                    f"standard_cells[{cell.name}].spice_port_order must list each declared pin exactly once"
+                    f"standard_cells[{cell.name}].spice_netlist_file not found: {cell.spice_netlist_file}"
+                )
+            port_order = _parse_subckt_ports(spice_path, cell.name)
+            cell.spice_port_order = port_order
+
+            pin_names = {p.name for p in cell.pins}
+            port_names = set(port_order)
+            if pin_names != port_names:
+                raise ValueError(
+                    f"standard_cells[{cell.name}]: declared pins {sorted(pin_names)} "
+                    f"do not match .subckt ports {sorted(port_names)} "
+                    f"in {cell.spice_netlist_file}"
                 )
 
             if not any(p.type == "power" for p in cell.pins):
@@ -436,6 +467,28 @@ class Config(BaseModel):
         return self
 
 
+def _parse_subckt_ports(file_path: Path, cell_name: str) -> list[str]:
+    """Parse a SPICE file to extract port order from the .subckt line."""
+    text = file_path.read_text()
+    # Handle SPICE line continuations (+ at start of line).
+    joined_lines: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("+"):
+            if joined_lines:
+                joined_lines[-1] += " " + stripped[1:].strip()
+            continue
+        joined_lines.append(stripped)
+
+    for line in joined_lines:
+        if line.lower().startswith(".subckt"):
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == cell_name:
+                return parts[2:]
+
+    raise ValueError(f"Could not find '.subckt {cell_name}' in {file_path}")
+
+
 def load_config(path: str | Path) -> Config:
     """Load and validate a YAML configuration file."""
     path = Path(path)
@@ -446,6 +499,12 @@ def load_config(path: str | Path) -> Config:
     itf_file = Path(raw["itf"]["file"])
     if not itf_file.is_absolute():
         raw["itf"]["file"] = str((path.parent / itf_file).resolve())
+
+    # Resolve spice_netlist_file paths relative to config location.
+    for cell_data in raw.get("standard_cells", []):
+        spi_file = cell_data.get("spice_netlist_file", "")
+        if spi_file and not Path(spi_file).is_absolute():
+            cell_data["spice_netlist_file"] = str((path.parent / spi_file).resolve())
 
     config = Config.model_validate(raw)
     config._config_path = path

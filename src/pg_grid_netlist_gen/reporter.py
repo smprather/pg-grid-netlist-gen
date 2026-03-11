@@ -10,26 +10,15 @@ from pg_grid_netlist_gen.geometry import Grid
 
 def _count_chain_load_elements(grid: Grid, config: Config) -> tuple[int, int]:
     """Return (resistor_count, capacitor_count) for chain load elements."""
-    chain_cell_cfg = config.get_cell_by_name(
-        config.spice_netlist.cell_chains.chain_cell
-    )
+    chains_cfg = config.spice_netlist.cell_chains
+    chain_cell_cfg = config.get_cell_by_name(chains_cfg.cell)
     output_pin = next(
         (p.name for p in chain_cell_cfg.pins if p.direction == "output"), None
     )
-    input_pin = next(
-        (
-            p.name
-            for p in chain_cell_cfg.pins
-            if p.direction == "input" and p.type == "signal"
-        ),
-        None,
-    )
-    if not output_pin or not input_pin:
+    if not output_pin:
         return 0, 0
 
-    loads_cfg = config.spice_netlist.cell_chains.cell_output_loads
-    in_chain_segs = max(1, loads_cfg.in_chain.number_pi_segments)
-    end_chain_segs = max(1, loads_cfg.end_of_chain.number_pi_segments)
+    n_seg = max(1, chains_cfg.interconnect.number_pi_segments)
 
     res_count = 0
     cap_count = 0
@@ -38,15 +27,14 @@ def _count_chain_load_elements(grid: Grid, config: Config) -> tuple[int, int]:
         if not output_net or not str(output_net).lower().startswith("chain_"):
             continue
 
-        is_last_in_chain = not any(
-            output_net == c.pin_connections.get(input_pin) for c in grid.cells
-        )
-        if is_last_in_chain:
-            res_count += end_chain_segs
-            cap_count += end_chain_segs + 1
+        if output_net.endswith("_OUT"):
+            # End-of-chain: 1 R + 1 C
+            res_count += 1
+            cap_count += 1
         else:
-            res_count += in_chain_segs
-            cap_count += in_chain_segs + 1
+            # Pi-model interconnect: n_seg R + (n_seg+1) C
+            res_count += n_seg
+            cap_count += n_seg + 1
     return res_count, cap_count
 
 
@@ -139,7 +127,7 @@ def generate_report(grid: Grid, config: Config) -> str:
     report_lines.append(f"  - Power Net: {power_net}")
     report_lines.append(f"  - Ground Net: {ground_net}")
     chain_cell_cfg = config.get_cell_by_name(
-        config.spice_netlist.cell_chains.chain_cell
+        config.spice_netlist.cell_chains.cell
     )
     input_pin = next(
         (

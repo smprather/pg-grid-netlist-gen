@@ -10,8 +10,7 @@ units:
   capacitance: ff
   resistance: ohms
   time: ps
-# This is the distance from the bottom of the lowest layer of metal to the bulk oxide
-# For this project, ignoring differentiation between nwell area and p- bulk silicon.
+# This is the distance from the bottom of the lowest layer of metal to the bulk silicon and nwells.
 feol_thickness: 0.200
 standard_cells:
   - name: BUFX12
@@ -34,7 +33,6 @@ standard_cells:
       - name: VSS
         type: ground
         location: bottom
-    spice_port_order: A Y VDD VSS
     spice_netlist_file: BUFX12.spi
     unateness: positive
   - name: DCAPX32
@@ -47,7 +45,6 @@ standard_cells:
       - name: VSS
         type: ground
         location: bottom
-    spice_port_order: VDD VSS
     spice_netlist_file: DCAPX32.spi
 # Pad location points
 ploc:
@@ -64,20 +61,27 @@ spice_netlist:
     resistance: 1.0
     capacitance: 1.0
   cell_chains:
-    chain_cell: BUFX12
-    cell_output_loads:
-      in_chain:
-        resistance: 200
-        capacitance: 100
-        number_pi_segments: 2
-      end_of_chain:
-        resistance: 200
-        capacitance: 500
-        number_pi_segments: 2
+    cell: BUFX12
+    interconnect:
+      resistance: 200
+      capacitance: 100
+      number_pi_segments: 2
+    end_of_chain_load:
+      resistance: 200
+      capacitance: 500
     chain_input_stimulus:
       period: 500
       # From 0% to 100%
-      transition_time: 20
+      transition_time:
+        nominal: 100
+        sigma: 5
+        floor: 20
+        ceiling: 200
+      initial_delay:
+        nominal: 100
+        sigma: 10
+        floor: 0
+        ceiling: 1000
     max_instance_count_per_chain: 5
   ir_drop_measurement:
     averaging_window:
@@ -85,9 +89,9 @@ spice_netlist:
       start: 10
       # % of output transition
       end: 75
-  transient_simulation:
-    total_time: 2000
-    time_step: 5
+  user_defined_lines:
+    - ".include \"spice_models.sp\""
+    - ".tran 5p 2000p"
 standard_cell_placement:
   # 7 tracks
   row_height: 0.315
@@ -121,7 +125,8 @@ grid:
   # The width and pitch are in terms of WMIN, and SMIN.
   # For example, if width=1.0, then the actual width in distance units is 1.0 * WMIN.
   # For example, if pitch=1.0, then the actual pitch in distance units is 1.0 * WMIN+SMIN.
-  # The lowest layer is implicitly: horizontal, type=grid, width=1.0, pitch=standard_cells.height
+  # The lowest layer in the ITF file is implicitly:
+  #   horizontal, type=grid, width=2.0, pitch=standard_cells.height
   # Layers alternate between horizontal and vertical moving up from the lowest layer.
   layer_usage:
     RDL: {type: grid, width: 1.0, pitch: 1.0}

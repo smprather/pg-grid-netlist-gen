@@ -44,7 +44,7 @@ Primary inputs:
 
 Highlights:
 
-- Grid layer usage supports stripe (`g`) and staple (`s`) layers.
+- Grid layer usage supports stripe (`grid`) and staple (`staple`) layers.
 - Metal resistance uses ITF `RPSQ`.
 - Via resistance uses ITF `RPV`.
 - Standard-cell PG pins tap directly onto lowest metal grid nodes by pin `type` (`power` / `ground`), not by pin name.

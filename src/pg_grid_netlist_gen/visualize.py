@@ -730,7 +730,7 @@ def render_grid(
 
     # Cells (chain cells).
     if grid.cells:
-        cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+        cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.cell)
         cell_w_nm = config.distance_to_nm(cell_cfg.width)
         cell_h_nm = config.distance_to_nm(cell_cfg.height)
 
@@ -803,7 +803,7 @@ def render_grid(
 
     # Flight lines.
     if grid.cells:
-        cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.chain_cell)
+        cell_cfg = config.get_cell_by_name(config.spice_netlist.cell_chains.cell)
         cell_w_nm = config.distance_to_nm(cell_cfg.width)
         cell_h_nm = config.distance_to_nm(cell_cfg.height)
         in_pin = next(
