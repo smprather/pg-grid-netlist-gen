@@ -6,18 +6,26 @@ cd "$repo_root"
 
 config_file="config.yaml"
 
-if [[ ! -x "./pg_grid_netlist_gen" ]]; then
-    echo "[pre-commit] ERROR: ./pg_grid_netlist_gen is missing or not executable."
-    exit 1
-fi
-
 if [[ ! -f "$config_file" ]]; then
     echo "[pre-commit] ERROR: $config_file not found."
     exit 1
 fi
 
+# Determine the runner: prefer the installed entry point, fall back to the bash wrapper.
+if [[ -x ".venv/bin/pg-grid-netlist-gen" ]]; then
+    runner=".venv/bin/pg-grid-netlist-gen"
+elif [[ -x ".venv/Scripts/pg-grid-netlist-gen.exe" ]]; then
+    runner=".venv/Scripts/pg-grid-netlist-gen.exe"
+elif [[ -x "./pg_grid_netlist_gen" ]]; then
+    runner="./pg_grid_netlist_gen"
+else
+    echo "[pre-commit] ERROR: Could not find pg-grid-netlist-gen runner."
+    echo "[pre-commit] Run: uv pip install -e ."
+    exit 1
+fi
+
 echo "[pre-commit] Regenerating outputs from $config_file ..."
-./pg_grid_netlist_gen "$config_file"
+"$runner" "$config_file"
 
 if [[ ! -f "output/pg_grid_visualization.html" ]]; then
     echo "[pre-commit] ERROR: output/pg_grid_visualization.html was not generated."

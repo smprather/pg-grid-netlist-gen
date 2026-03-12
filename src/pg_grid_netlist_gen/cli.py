@@ -49,7 +49,7 @@ def generate(
         summary_text = generate_report(grid, config)
         click.echo(summary_text)
         summary_path = output_dir / "pg_grid_summary.txt"
-        summary_path.write_text(summary_text + "\n")
+        summary_path.write_text(summary_text + "\n", encoding="utf-8")
         click.echo(f"Writing summary report: {summary_path}")
 
     if netlist:

@@ -128,7 +128,7 @@ def write_netlist(grid: Grid, config: Config, output_path: str | Path, rng: rand
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(output_path, "w") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         _write_header(f, config)
         _write_user_defined_lines(f, config)
         _write_sources(f, grid, config)

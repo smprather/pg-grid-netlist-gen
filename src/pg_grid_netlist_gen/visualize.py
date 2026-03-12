@@ -926,13 +926,13 @@ def render_grid(
         html_content = f"<html><body>{div1}{div2}</body></html>"
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             f.write(html_content)
 
         if open_browser:
             import webbrowser
 
-            webbrowser.open(f"file://{output_path.resolve()}")
+            webbrowser.open(output_path.resolve().as_uri())
 
     if save_image_layer:
         # Reserved for future static-image extraction implementation.

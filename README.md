@@ -18,21 +18,50 @@ Generates an ASIC PG grid model from YAML + ITF inputs:
 
 ## Setup
 
+### Linux/macOS
+
 ```bash
+uv pip install -e .
+```
+
+### Windows
+
+```powershell
 uv pip install -e .
 ```
 
 ## Run
 
+### Linux/macOS
+
 ```bash
 ./pg_grid_netlist_gen config.yaml
 ```
 
-Common options:
+### Windows
+
+```powershell
+.\.venv\Scripts\pg-grid-netlist-gen.exe config.yaml
+```
+
+Or use the batch script wrapper:
+
+```powershell
+.\pg-grid-netlist-gen.bat config.yaml
+```
+
+Common options (all platforms):
 
 ```bash
 ./pg_grid_netlist_gen config.yaml --open-browser
 ./pg_grid_netlist_gen config.yaml --output-dir output
+```
+
+Or on Windows:
+
+```powershell
+.\.venv\Scripts\pg-grid-netlist-gen.exe config.yaml --open-browser
+.\.venv\Scripts\pg-grid-netlist-gen.exe config.yaml --output-dir output
 ```
 
 ## Configuration
